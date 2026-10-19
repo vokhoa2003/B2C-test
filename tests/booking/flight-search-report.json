@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "id": "case-1-domestic-adult-only",
+      "description": "Nội địa, chỉ người lớn, 1 chiều, ngẫu nhiên hãng",
+      "tripType": "oneway",
+      "routeType": "domestic",
+      "adults": 1,
+      "children": 0,
+      "infants": 0,
+      "airlineNames": [],
+      "stopFilter": null,
+      "departureTimeFilter": null
+    },
+    {
+      "id": "case-2-domestic-adult-child",
+      "description": "Nội địa, người lớn + trẻ em, 1 chiều",
+      "tripType": "oneway",
+      "routeType": "domestic",
+      "adults": 2,
+      "children": 1,
+      "infants": 0,
+      "airlineNames": [],
+      "stopFilter": null,
+      "departureTimeFilter": null
+    },
+    {
+      "id": "case-3-international-adult-infant",
+      "description": "Quốc tế, người lớn + em bé, 1 chiều",
+      "tripType": "oneway",
+      "routeType": "international",
+      "adults": 1,
+      "children": 0,
+      "infants": 1,
+      "airlineNames": [],
+      "stopFilter": null,
+      "departureTimeFilter": null
+    }
+  ],
+  "defaults": {
+    "domesticMinDays": 20,
+    "internationalMinDays": 40,
+    "maxAirlinesPerRun": 5,
+    "maxFlightsToInspectPerAirline": 2
+  }
+}

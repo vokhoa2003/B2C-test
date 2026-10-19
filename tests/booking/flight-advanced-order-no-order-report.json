@@ -1,0 +1,20 @@
+{
+  "maxIterationsPerRun": 5,
+  "routes": [
+    {
+      "code": "SGN",
+      "searchText": "Tân Sơn Nhất",
+      "isDomestic": true
+    },
+    {
+      "code": "HAN",
+      "searchText": "Nội Bài",
+      "isDomestic": true
+    },
+    {
+      "code": "DAD",
+      "searchText": "Đà Nẵng",
+      "isDomestic": true
+    }
+  ]
+}

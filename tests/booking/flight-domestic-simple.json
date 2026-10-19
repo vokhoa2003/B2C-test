@@ -1,0 +1,72 @@
+{
+  "maxOrdersPerRun": 3,
+  "maxSoldOutRetries": 3,
+  "domesticMinDays": 20,
+  "internationalMinDays": 40,
+  "routes": [
+    {
+      "code": "SGN",
+      "searchText": "Tân Sơn Nhất",
+      "isDomestic": true
+    },
+    {
+      "code": "HAN",
+      "searchText": "Nội Bài",
+      "isDomestic": true
+    },
+    {
+      "code": "DAD",
+      "searchText": "Đà Nẵng",
+      "isDomestic": true
+    },
+    {
+      "code": "TPE",
+      "searchText": "Đài Bắc",
+      "isDomestic": false
+    },
+    {
+      "code": "SYD",
+      "searchText": "Sydney",
+      "isDomestic": false
+    },
+    {
+      "code": "NRT",
+      "searchText": "Tokyo",
+      "isDomestic": false
+    }
+  ],
+  "passengerNames": [
+    "SYSTEM AUTO TESTER VIETNAMESE",
+    "SYSTEM AUTO TESTER MOBILE",
+    "SYSTEM AUTO TESTER DESKTOP",
+    "SYSTEM AUTO TESTER REGRESSION",
+    "SYSTEM AUTO TESTER SMOKE"
+  ],
+  "abroadPassengerNames": [
+    "SYSTEM AUTO TESTER ABROAD",
+    "SYSTEM AUTO TESTER OVERSEAS",
+    "SYSTEM AUTO TESTER FOREIGN",
+    "SYSTEM AUTO TESTER INTERNATIONAL",
+    "SYSTEM AUTO TESTER GLOBAL"
+  ],
+  "foreignNationalities": [
+    "United States",
+    "Japan",
+    "South Korea",
+    "Australia"
+  ],
+  "contact": {
+    "fullName": "VO PHAM DANG KHOA",
+    "phone": "935912495",
+    "emails": [
+      "vophamdangkhoa.010103@gmail.com",
+      "akiyoshimeo@gmail.com"
+    ]
+  },
+  "onePayTestCard": {
+    "number": "9704360000000000002",
+    "issueDateDigits": "0113",
+    "cardHolderName": "NGUYEN VAN A"
+  },
+  "onePayTestOtp": "123456"
+}
