@@ -572,6 +572,7 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
             `lệch giá=${result.priceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);
+        result.warnings.forEach((w) => console.log(`    ⚠ ${w}`));
 
         // Chỉ fail khi 1 bên không trả được dữ liệu (lỗi/timeout); chênh lệch số liệu là KẾT QUẢ, ghi vào báo cáo.
         expect.soft(webRes.timedOut, `${c.id}: ${webRes.error} — ${webUrl}`).toBe(false);

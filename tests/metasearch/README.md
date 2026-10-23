@@ -197,13 +197,15 @@ Mỗi hành trình meta được tìm ở web theo **đúng system** và **từn
 
 | | Web (FE tự tính) | Meta (server tính sẵn) |
 |---|---|---|
-| Giá hãng | `inventory.totalAmount` nguyên từ API | `totalAmount` **đã trừ voucher AUTO_APPLY** |
+| Giá hãng | FE tự nhân giá **từng khách** với số khách: NL × `totalAdt` + TE × `totalChd` + EB × `totalInf` — **không** dùng `inventory.totalAmount` | `totalAmount` **đã trừ voucher AUTO_APPLY** |
 | Voucher | Chỉ trừ khi khách nhập mã lúc thanh toán | `estimatedVoucherCode` / `estimatedVoucherDiscount`, phân bổ: fee → tax; em bé → trẻ em → người lớn; chiều đi trước (`metasearch/README.md` §2.2 của cms) |
 | Phí hệ thống | FE cộng `fareData.fees`: ADULT × số NL + CHILD × số TE, em bé không tính (`useChoosenFlightsDetailPrice.ts`) | `serviceFeeAmount`, không nằm trong `totalAmount` |
 
 Vì vậy tool so:
 
-- **Giá**: `totalAmount + estimatedVoucherDiscount` (meta trước voucher) với giá hãng web (tổng mọi khách, gồm thuế phí).
+- **Giá**: `totalAmount + estimatedVoucherDiscount` (meta trước voucher) với giá hãng web tính như FE: NL × `totalAdt` + TE × `totalChd` + EB × `totalInf` (tổng mọi khách, gồm thuế phí).
+  - Vì sao không dùng `totalAmount` của web: với **VJ / VN / VU từ 2 người lớn**, API web trả `totalAmount` chỉ cộng **1 người lớn** (VD VJ975 2 NL + 1 TE: 6.757.000 thay vì 10.197.000). FE không dùng trường này nên khách vẫn thấy đúng giá. Trước ~08:22 ngày 23/10 meta cũng cộng thiếu y như vậy (nên 2 bên "khớp" sai); sau đó meta VJ đã tính đúng.
+  - Mỗi điều kiện có dòng **⚠ cảnh báo** (trong report và console) khi bên nào có `totalAmount` khác tổng theo số khách — VD `WEB VJ: 18 hạng vé có totalAmount lệch — VD VJ975: totalAmount 6.757.000 ≠ tổng theo số khách 10.197.000 (2 NL × 3.440.000 + 1 TE × 3.317.000)`. Đây là lỗi dữ liệu API cần báo backend, không ảnh hưởng kết luận khớp/lệch.
 - **Phí**: `serviceFeeAmount` meta với phí hệ thống web.
 - **Giá cuối khách thấy** (chỉ để tham khảo): meta = `totalAmount + serviceFeeAmount`; web = giá hãng + phí hệ thống, chưa nhập voucher.
 

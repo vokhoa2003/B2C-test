@@ -23,7 +23,37 @@
  * Web có nhiều hạng vé cho 1 hành trình nên giá meta khớp khi bằng 1 trong các giá web.
  */
 
-export type FareInventory = { totalAmount?: number | null; cabinClass?: string | null; adt?: number; chd?: number };
+export type FareInventory = {
+  totalAmount?: number | null;
+  cabinClass?: string | null;
+  adt?: number;
+  chd?: number;
+  inf?: number;
+  totalAdt?: number | null;
+  totalChd?: number | null;
+  totalInf?: number | null;
+};
+
+/**
+ * Giá 1 inventory theo cách FE web tính (useChoosenFlightsDetailPrice.ts nhân giá TỪNG khách với số
+ * khách): NL × totalAdt + TE × totalChd + EB × totalInf. KHÔNG dùng `totalAmount` của API web: với
+ * VJ/VN/VU nhiều người lớn trường này chỉ cộng 1 người lớn (đã gặp thật: 2 NL + 1 TE, totalAmount
+ * 6.757.000 thay vì 10.197.000) — FE không dùng nó nên khách vẫn thấy đúng giá.
+ * Thiếu giá từng khách thì quay về totalAmount.
+ */
+export function paxTotal(inv: FareInventory): number | null {
+  if (typeof inv.totalAdt !== "number") return typeof inv.totalAmount === "number" ? inv.totalAmount : null;
+  return (inv.adt ?? 1) * inv.totalAdt + (inv.chd ?? 0) * (inv.totalChd ?? 0) + (inv.inf ?? 0) * (inv.totalInf ?? 0);
+}
+
+/** "totalAmount 6.757.000 ≠ tổng theo số khách 10.197.000" nếu 2 số lệch nhau, ngược lại null. */
+export function totalAmountGap(inv: FareInventory | undefined): string | null {
+  if (!inv || typeof inv.totalAmount !== "number" || typeof inv.totalAdt !== "number") return null;
+  const expected = paxTotal(inv)!;
+  if (Math.abs(expected - inv.totalAmount) < 1) return null;
+  const fmt = (v: number) => Math.round(v).toLocaleString("vi-VN");
+  return `totalAmount ${fmt(inv.totalAmount)} ≠ tổng theo số khách ${fmt(expected)} (${inv.adt ?? 1} NL × ${fmt(inv.totalAdt)}${inv.chd ? ` + ${inv.chd} TE × ${fmt(inv.totalChd ?? 0)}` : ""}${inv.inf ? ` + ${inv.inf} EB × ${fmt(inv.totalInf ?? 0)}` : ""})`;
+}
 export type FareSegment = {
   airline: string;
   flightNumber: string;
@@ -107,7 +137,29 @@ export type CompareResult = {
   webOnly: number;
   /** Số hành trình meta có voucher AUTO_APPLY trừ sẵn. */
   withVoucher: number;
+  /**
+   * Cảnh báo dữ liệu: inventory có `totalAmount` khác tổng theo số khách, gom theo bên + system,
+   * VD "WEB VJ: 21 hạng vé — VD VJ975: totalAmount 6.757.000 ≠ tổng theo số khách 10.197.000 (…)".
+   */
+  warnings: string[];
 };
+
+function totalAmountWarnings(side: "WEB" | "META", items: FareItem[]): string[] {
+  const bySystem = new Map<string, { count: number; example: string }>();
+  for (const item of items) {
+    for (const leg of item.flights ?? []) {
+      for (const inv of leg.inventories ?? []) {
+        const gap = totalAmountGap(inv);
+        if (!gap) continue;
+        const system = normSystem(item.system);
+        const entry = bySystem.get(system) ?? { count: 0, example: `${leg.segments.map((sg) => sg.flightNumber).join("-")}: ${gap}` };
+        entry.count++;
+        bySystem.set(system, entry);
+      }
+    }
+  }
+  return [...bySystem].map(([system, e]) => `${side} ${system}: ${e.count} hạng vé có totalAmount lệch — VD ${e.example}`);
+}
 
 /** Meta có giá lẻ thập phân (VD 568257.38) — làm tròn 2 số để tránh sai số float. */
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -125,7 +177,11 @@ const flightNumberKey = (seg: FareSegment) => {
   return airline && fn.startsWith(airline) && /^\d/.test(fn.slice(airline.length)) ? fn.slice(airline.length) : fn;
 };
 
-function toLegInfo(leg: FareLeg, dirCount: number): LegInfo {
+/**
+ * @param priceMode "fe" (web): giá theo từng khách như FE tính; "api" (meta): `totalAmount` meta trả
+ * (meta là chuẩn — đúng/sai thế nào thì lộ ra khi so với web).
+ */
+function toLegInfo(leg: FareLeg, dirCount: number, priceMode: "fe" | "api"): LegInfo {
   const segs = leg.segments ?? [];
   const flightNumbers = segs.map((s) => s.flightNumber).join("-");
   const depart = segs[0]?.startTime ?? "?";
@@ -138,7 +194,7 @@ function toLegInfo(leg: FareLeg, dirCount: number): LegInfo {
     arrive,
     airline: segs[0]?.airline ?? "?",
     key: `${segs.map(flightNumberKey).join("-")}|${depart}|${arrive}`,
-    prices: positive((leg.inventories ?? []).map((i) => i.totalAmount)),
+    prices: positive((leg.inventories ?? []).map((i) => (priceMode === "fe" ? paxTotal(i) : i.totalAmount))),
   };
 }
 
@@ -186,7 +242,7 @@ function indexWeb(items: FareItem[], dirCount: number) {
   const splitLegs = new Map<string, WebSplitLeg>();
   for (const item of items) {
     const system = normSystem(item.system);
-    const legs = [...(item.flights ?? [])].sort((a, b) => a.leg - b.leg).map((l) => toLegInfo(l, dirCount));
+    const legs = [...(item.flights ?? [])].sort((a, b) => a.leg - b.leg).map((l) => toLegInfo(l, dirCount, "fe"));
     if (!legs.length) continue;
     if (legs.length >= dirCount) {
       const key = itinKey(system, legs);
@@ -194,7 +250,7 @@ function indexWeb(items: FareItem[], dirCount: number) {
         system, airline: item.airline || legs[0].airline, legs, prices: new Set(), fees: item.fees ?? [], used: false,
       };
       // Web combo để giá trọn gói trên inventory của chặng đầu (lặp lại ở chặng sau).
-      positive([item.totalAmount, ...legs[0].prices]).forEach((p) => combo.prices.add(p));
+      legs[0].prices.forEach((p) => combo.prices.add(p));
       combos.set(key, combo);
       continue;
     }
@@ -223,7 +279,7 @@ export function compareMetaAgainstWeb(metaItems: FareItem[], webItems: FareItem[
   const rowsByKey = new Map<string, DetailRow>();
 
   for (const item of metaItems) {
-    const legs = [...(item.flights ?? [])].sort((a, b) => a.leg - b.leg).map((l) => toLegInfo(l, dirCount));
+    const legs = [...(item.flights ?? [])].sort((a, b) => a.leg - b.leg).map((l) => toLegInfo(l, dirCount, "api"));
     if (!legs.length) continue;
     const legSystems = metaLegSystems(item, legs.length);
     const mixedSystems = new Set(legSystems).size > 1;
@@ -384,5 +440,6 @@ export function compareMetaAgainstWeb(metaItems: FareItem[], webItems: FareItem[
     metaOnly: count("CHỈ CÓ Ở META"),
     webOnly: webOnlyRows.length,
     withVoucher: metaRows.filter((r) => r.voucherDiscount > 0).length,
+    warnings: [...totalAmountWarnings("META", metaItems), ...totalAmountWarnings("WEB", webItems)],
   };
 }

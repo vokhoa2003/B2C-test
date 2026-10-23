@@ -183,6 +183,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
           <li>Web: ${esc(c.webStatus)}</li>
           <li>Meta: ${esc(c.metaStatus)}</li>
           <li>Deeplink meta: ${esc(c.deeplink)}</li>
+          ${c.result.warnings.map((w) => `<li class="warn">⚠ ${esc(w)}</li>`).join("")}
         </ul>
         <h3>Chuyến lệch giá / thiếu (${problems.length})</h3>
         ${detailTable(problems)}
@@ -211,6 +212,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   .tag.ok { background: #dcfce7; color: #166534; } .tag.diff { background: #fee2e2; color: #991b1b; }
   .tag.meta { background: #fef3c7; color: #92400e; } .tag.web { background: #dbeafe; color: #1e40af; }
   .meta-list { margin: 8px 0; padding-left: 18px; font-size: 13px; }
+  .meta-list .warn { color: #92400e; }
   details { margin-top: 12px; } summary { cursor: pointer; color: #2563eb; }
 </style></head><body>
   <h1>So sánh kết quả search: Metasearch đối tác vs Web gốc</h1>
