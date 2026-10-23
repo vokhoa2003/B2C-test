@@ -9,7 +9,13 @@
     "test:chromium": "playwright test --project=chromium",
     "report": "playwright show-report",
     "install:browsers": "playwright install",
-    "clean": "node -e \"require('fs').rmSync('test-results',{recursive:true,force:true});require('fs').rmSync('playwright-report',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('test-results',{recursive:true,force:true});require('fs').rmSync('playwright-report',{recursive:true,force:true})\"",
+    "compare:metasearch": "node scripts/compare-metasearch.js",
+    "compare:metasearch:headed": "node scripts/compare-metasearch.js --headed",
+    "compare:metasearch:clear": "node scripts/compare-metasearch.js --clear-history",
+    "compare:metasearch:reports": "node scripts/metasearch-reports.js",
+    "compare:metasearch:review": "node scripts/compare-metasearch.js --review",
+    "compare:metasearch:open": "node scripts/metasearch-reports.js --live"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

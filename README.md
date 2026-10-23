@@ -103,6 +103,9 @@ tests/
     flight-advanced-order.spec.ts         # Phần II: tạo order thật + luân phiên cổng thanh toán
     flight-advanced-order-no-order-report.spec.ts  # Giống trên nhưng KHÔNG tạo order thật
     *.json                                 # Override data cho spec cùng tên — xem tests/booking/README.md
+  metasearch/             # So sánh kết quả search metasearch đối tác vs web gốc (xem tests/metasearch/README.md)
+    metasearch-vs-web.spec.ts             # Chạy: yarn compare:metasearch
+    metasearch-vs-web.json                # Mẫu điều kiện, danh sách sân bay, timeout
 ```
 
 > `smoke/` và `auth/` hiện đang `test.describe.skip` — là case cũ dùng để verify
