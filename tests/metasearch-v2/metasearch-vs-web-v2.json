@@ -1,0 +1,39 @@
+{
+  "conditionsPerRun": 5,
+  "filters": { "tripType": "all", "routeType": "all" },
+  "templates": [
+    { "description": "Nội địa, 1 chiều, 1 người lớn", "routeType": "domestic", "tripType": "oneway", "adults": 1, "children": 0, "infants": 0 },
+    { "description": "Nội địa, 1 chiều, 1 người lớn + 1 em bé", "routeType": "domestic", "tripType": "oneway", "adults": 1, "children": 0, "infants": 1 },
+    { "description": "Nội địa, 1 chiều, 2 người lớn + 1 trẻ em + 1 em bé", "routeType": "domestic", "tripType": "oneway", "adults": 2, "children": 1, "infants": 1 },
+    { "description": "Nội địa, khứ hồi, 1 người lớn", "routeType": "domestic", "tripType": "roundtrip", "adults": 1, "children": 0, "infants": 0 },
+    { "description": "Nội địa, khứ hồi, 2 người lớn + 1 trẻ em", "routeType": "domestic", "tripType": "roundtrip", "adults": 2, "children": 1, "infants": 0 },
+    { "description": "Quốc tế, 1 chiều, 1 người lớn", "routeType": "international", "tripType": "oneway", "adults": 1, "children": 0, "infants": 0 },
+    { "description": "Quốc tế, 1 chiều, 1 người lớn + 1 em bé", "routeType": "international", "tripType": "oneway", "adults": 1, "children": 0, "infants": 1 },
+    { "description": "Quốc tế, 1 chiều, 2 người lớn + 1 trẻ em", "routeType": "international", "tripType": "oneway", "adults": 2, "children": 1, "infants": 0 },
+    { "description": "Quốc tế, khứ hồi, 1 người lớn", "routeType": "international", "tripType": "roundtrip", "adults": 1, "children": 0, "infants": 0 },
+    { "description": "Quốc tế, khứ hồi, 2 người lớn + 1 trẻ em + 1 em bé", "routeType": "international", "tripType": "roundtrip", "adults": 2, "children": 1, "infants": 1 }
+  ],
+  "airports": {
+    "domesticHubs": ["SGN", "HAN", "DAD"],
+    "domestic": [
+      "SGN", "HAN", "DAD", "CXR", "PQC", "HPH", "VII", "HUI", "VCA", "DLI", "BMV",
+      "UIH", "VDH", "THD", "VCS", "TBB", "PXU", "CAH", "VKG", "VCL", "DIN", "VDO"
+    ],
+    "vnInternationalGateways": ["SGN", "HAN", "DAD", "CXR", "PQC", "HPH"],
+    "international": [
+      "TPE", "NRT", "HND", "KIX", "ICN", "PUS", "BKK", "HKT", "SIN", "KUL", "HKG", "MFM",
+      "CAN", "PVG", "DPS", "CGK", "MNL", "PNH", "REP", "VTE", "SYD", "MEL", "DXB", "CDG", "FRA", "LHR", "LAX"
+    ]
+  },
+  "defaults": {
+    "domesticMinDays": 20,
+    "internationalMinDays": 40,
+    "randomExtraDays": 14,
+    "returnAfterDaysMin": 3,
+    "returnAfterDaysMax": 7,
+    "currency": "VND",
+    "language": "VI",
+    "webTimeoutMs": 300000,
+    "metaTimeoutMs": 300000
+  }
+}

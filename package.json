@@ -15,7 +15,12 @@
     "compare:metasearch:clear": "node scripts/compare-metasearch.js --clear-history",
     "compare:metasearch:reports": "node scripts/metasearch-reports.js",
     "compare:metasearch:review": "node scripts/compare-metasearch.js --review",
-    "compare:metasearch:open": "node scripts/metasearch-reports.js --live"
+    "compare:metasearch:open": "node scripts/metasearch-reports.js --live",
+    "compare:metasearch:v2": "node scripts/compare-metasearch-v2.js",
+    "compare:metasearch:v2:review": "node scripts/compare-metasearch-v2.js --review",
+    "compare:metasearch:v2:clear": "node scripts/compare-metasearch-v2.js --clear-history",
+    "compare:metasearch:v2:reports": "node scripts/metasearch-reports-v2.js",
+    "compare:metasearch:v2:open": "node scripts/metasearch-reports-v2.js --live"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

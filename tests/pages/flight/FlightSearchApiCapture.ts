@@ -5,6 +5,8 @@ export type CapturedSearch = {
   requestBody: Record<string, unknown> | null;
   status: number;
   fareData: FareItem[];
+  /** Không đọc được body (VD response quá lớn Chrome không cho đọc) — fareData rỗng KHÔNG có nghĩa là 0 kết quả. */
+  bodyError?: string;
 };
 
 export type WebSearchCaptureResult = {
@@ -76,8 +78,13 @@ export class FlightSearchApiCapture {
         } catch {
           // Body không phải JSON: vẫn giữ response.
         }
-        const json = await res.json().catch(() => ({}));
-        searches.push({ requestBody, status: res.status(), fareData: Array.isArray(json?.fareData) ? json.fareData : [] });
+        // Response lớn (VD GALILEO_NDC ~10 MB) Chrome không cho đọc body → ghi lỗi, KHÔNG coi là 0 kết quả.
+        let bodyError: string | undefined;
+        const json = await res.json().catch((err: Error) => {
+          bodyError = err.message.split("\n")[0];
+          return {};
+        });
+        searches.push({ requestBody, status: res.status(), fareData: Array.isArray(json?.fareData) ? json.fareData : [], bodyError });
         onDone();
       })();
       pending.add(task);
@@ -114,6 +121,15 @@ export class FlightSearchApiCapture {
     }
     if (timedOut && !error) error = `web chưa load xong sau ${Math.round((Date.now() - t0) / 1000)}s`;
     await Promise.all([...pending]);
+
+    // Có system không đọc được body → dữ liệu web thiếu, không được so (sẽ báo nhầm "chỉ có ở meta").
+    const unreadable = searches.filter((s) => s.bodyError);
+    if (unreadable.length && !error) {
+      timedOut = true;
+      error =
+        `không đọc được kết quả ${unreadable.map((s) => (s.requestBody?.flights as { airline?: string }[] | undefined)?.[0]?.airline ?? "?").join(", ")} ` +
+        `(response quá lớn với browser) — đặt WEB_API_TOKEN trong .env để gọi API web trực tiếp`;
+    }
 
     const readTexts = async (selector: string) =>
       (await this.page.locator(selector).allInnerTexts().catch(() => [] as string[])).map((t) => t.replace(/\s+/g, " ").trim());

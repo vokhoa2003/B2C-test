@@ -32,6 +32,23 @@ META_PASSWORD=<password>
 
 Thiếu 3 biến `META_CLIENT_ID` / `META_USERNAME` / `META_PASSWORD` thì test tự **skip**.
 
+**Nên đặt thêm token web** để lấy dữ liệu web bằng cách gọi thẳng API (nhanh hơn, không bị thiếu dữ liệu):
+
+```env
+WEB_API_URL=https://api-dev.triphubs.vn
+# Cách 1: dán sẵn token
+WEB_API_TOKEN=<token>
+# Cách 2: để tool tự đăng nhập lấy token (dùng khi WEB_API_TOKEN bỏ trống)
+WEB_API_CLIENT_ID=<client id>
+WEB_API_USERNAME=<username>
+WEB_API_PASSWORD=<password>
+```
+
+- **Cách 1 — dán token**: mở dev.triphubs.vn, search 1 chuyến → F12 → Network → request `flights/search` → Request Headers → `authorization`, copy phần sau chữ `Bearer `. Đây là token ứng dụng web (clientId `TE`), dùng chung mọi lượt search.
+- **Cách 2 — tự đăng nhập**: tool gọi `POST {WEB_API_URL}/auth/login` với `{ clientId, username, password }` giống hệt web (web đọc từ `NEXT_PUBLIC_AUTHEN_API_CLIENT_ID` / `_USER` / `_PASS`). Có cả 2 cách thì **ưu tiên `WEB_API_TOKEN`**. Đăng nhập sai → dừng ngay với lỗi `Đăng nhập API web thất bại (HTTP 401): Invalid credentials …`.
+- Có token: tool gửi `POST /flights/search/` cho từng system song song, đúng body/header như web (`webSystems` trong JSON: nội địa VN, VJ, VU, _9G; quốc tế VN, VJ, VU, GALILEO_NDC, JQ, _9G).
+- Không có token: bắt qua browser như cũ. **Hạn chế**: response lớn (VD GALILEO_NDC khứ hồi SGN⇄ICN 2 NL + 1 TE ≈ 10 MB, 965 kết quả) browser không đọc được → điều kiện đó báo **"KHÔNG SO ĐƯỢC (không đọc được kết quả GALILEO_NDC…)"** thay vì báo nhầm "chỉ có ở meta".
+
 ## 2. Chạy
 
 ```bash
@@ -175,7 +192,12 @@ Trang tổng hợp `.test-state/metasearch-compare/index.html` được tạo l�
 | **CHỈ CÓ Ở META** | Meta trả hành trình mà web không có (ghi chú nói rõ thiếu chặng nào). |
 | **CHỈ CÓ Ở WEB** | Web có mà meta không trả. Với hãng bán chặng lẻ (VJ/VU/9G khứ hồi) tính theo **từng chặng**. |
 
-Mỗi dòng hiện: bên có chuyến, system, hãng, số hiệu + chặng + giờ đi → đáp của từng chiều, giá meta (trước voucher, kèm giá API trả + voucher), giá web (mức gần nhất + các mức hạng vé), chênh lệch, phí hệ thống 2 bên, giá cuối khách thấy.
+### 3.2. Bảng chi tiết từng hành trình (v1 và v2 dùng chung)
+
+- **Tóm tắt theo system** ở đầu mỗi điều kiện (VD `GALILEO_NDC: 9 lệch/thiếu · 25 khớp`) — bấm để lọc riêng system đó.
+- **Lọc trạng thái**: Lệch / thiếu (mặc định khi có), Tất cả, từng trạng thái — kèm số lượng. Ô **tìm** số hiệu / chặng (VD `VJ975`, `ICN`), **sắp xếp** (chênh lệch lớn nhất, giá thấp nhất, giờ đi sớm nhất), **phân trang** 25 / 50 / 100 dòng.
+- Mỗi dòng gọn: trạng thái · system (+ hãng) · hành trình (mỗi chiều 1 dòng: số hiệu, chặng, ngày giờ đi → giờ đến, `+1` nếu qua đêm) · giá META · giá WEB (số mức hạng vé) · chênh · phí.
+- **Bấm vào dòng** để mở chi tiết: giá API trả + voucher, giá từng chiều, các mức hạng vé web (mức khớp tô xanh), phí và tổng 2 bên, chặng lệch, nguồn web (combo / 2 chặng lẻ), ghi chú.
 
 ## 4. Logic so khớp
 

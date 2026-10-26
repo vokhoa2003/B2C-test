@@ -130,6 +130,11 @@ export type DetailRow = {
 export type CompareResult = {
   rows: DetailRow[];
   metaOffers: number;
+  /**
+   * Số kết quả web nhận về: `items` = tổng fareData mọi system; `combos` = hành trình đủ chiều
+   * (1 chiều: mỗi chuyến); `outLegs` / `inLegs` = chặng lẻ chiều đi / về (khứ hồi bán tách chiều).
+   */
+  webResults: { items: number; combos: number; outLegs: number; inLegs: number };
   matched: number;
   priceDiffs: number;
   feeDiffs: number;
@@ -434,6 +439,12 @@ export function compareMetaAgainstWeb(metaItems: FareItem[], webItems: FareItem[
   return {
     rows: [...metaRows, ...webOnlyRows],
     metaOffers: metaRows.length,
+    webResults: {
+      items: webItems.length,
+      combos: web.combos.size,
+      outLegs: [...web.splitLegs.values()].filter((s) => s.leg.dir === 0).length,
+      inLegs: [...web.splitLegs.values()].filter((s) => s.leg.dir === 1).length,
+    },
     matched: count("KHỚP"),
     priceDiffs: count("LỆCH GIÁ"),
     feeDiffs: count("LỆCH PHÍ"),

@@ -5,6 +5,7 @@ import { loadTestData } from "../helpers/testDataLoader";
 import { daysFromNowToDate } from "../helpers/randomPassenger";
 import { MetasearchBody, MetasearchClient, MetasearchResponse } from "../helpers/metasearchClient";
 import { FlightSearchApiCapture } from "../pages/flight/FlightSearchApiCapture";
+import { WebSearchClient, WebSystems, loginWebApi } from "../helpers/webSearchClient";
 import { MetasearchToolPage } from "../pages/metasearch/MetasearchToolPage";
 import { labelTab, launchReviewBrowser } from "../helpers/reviewBrowser";
 import { FareItem, compareMetaAgainstWeb } from "../helpers/metasearchCompare";
@@ -66,6 +67,8 @@ type TestData = {
   /** Chỉ dùng template khớp bộ lọc. Ghi đè bằng env META_TRIP_TYPE / META_ROUTE_TYPE (cờ --trip / --route). */
   filters?: { tripType?: TripFilter; routeType?: RouteFilter; airlines?: string[] };
   templates: ConditionTemplate[];
+  /** System web gọi /flights/search/ (khi gọi API trực tiếp bằng WEB_API_TOKEN) — như getAirlinesCanBeExcuted của web. */
+  webSystems?: WebSystems;
   airports: {
     /** Sân bay trục nội địa — chặng nội địa luôn có 1 đầu ở đây (ghép 2 sân bay nhỏ hay không có đường bay). */
     domesticHubs: string[];
@@ -129,6 +132,12 @@ const DEFAULT_DATA: TestData = {
 };
 
 const DATA = loadTestData<TestData>(__filename, DEFAULT_DATA);
+// Danh sách system web gọi — theo request thật của dev.triphubs.vn (26/10: quốc tế có cả VU). Sửa trong JSON nếu web đổi.
+const WEB_SYSTEMS: WebSystems = {
+  domestic: ["VN", "VJ", "VU", "_9G"],
+  international: ["VN", "VJ", "VU", "GALILEO_NDC", "JQ", "_9G"],
+  ...DATA.webSystems,
+};
 // loadTestData chỉ merge 1 cấp: JSON cũ thiếu key mới trong `airports` thì lấy mặc định.
 const AIRPORTS = { ...DEFAULT_DATA.airports, ...DATA.airports };
 
@@ -209,6 +218,14 @@ const matchesAirline = (item: FareItem) =>
 
 const WEB_URL = (process.env.META_COMPARE_WEB_URL || "https://dev.triphubs.vn").replace(/\/+$/, "");
 const META_API_URL = (process.env.META_API_URL || "https://api-dev.triphubs.vn").replace(/\/+$/, "");
+// Lấy dữ liệu web bằng cách gọi thẳng API (helpers/webSearchClient.ts) khi có WEB_API_TOKEN, hoặc có
+// WEB_API_CLIENT_ID / WEB_API_USERNAME / WEB_API_PASSWORD để tự đăng nhập lấy token; không có → bắt qua browser.
+const WEB_API_URL = (process.env.WEB_API_URL || "https://api-dev.triphubs.vn").replace(/\/+$/, "");
+const WEB_API_TOKEN = (process.env.WEB_API_TOKEN || "").replace(/^Bearer\s+/i, "").trim();
+const WEB_API_CREDENTIALS =
+  process.env.WEB_API_CLIENT_ID && process.env.WEB_API_USERNAME && process.env.WEB_API_PASSWORD
+    ? { clientId: process.env.WEB_API_CLIENT_ID, username: process.env.WEB_API_USERNAME, password: process.env.WEB_API_PASSWORD }
+    : null;
 
 type Condition = {
   id: string;
@@ -394,6 +411,9 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
     const d = DATA.defaults;
     test.setTimeout(CONDITIONS_PER_RUN * (Math.max(d.webTimeoutMs, d.metaTimeoutMs) + 2 * 60_000));
 
+    // Token đặt sẵn được ưu tiên; không có thì đăng nhập như web (lỗi đăng nhập → dừng luôn, báo rõ lý do) — làm
+    // TRƯỚC khi tạo thư mục báo cáo để lỗi đăng nhập không để lại báo cáo rỗng.
+    const webToken = WEB_API_TOKEN || (WEB_API_CREDENTIALS ? await loginWebApi(request, WEB_API_URL, WEB_API_CREDENTIALS) : "");
     const startedAt = new Date();
     const runDir = createRunDir();
     const summaryCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "summary.csv"), [
@@ -412,6 +432,12 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
     const reviewBrowser = review ? await launchReviewBrowser(runDir) : null;
     const tabs = reviewBrowser ? reviewBrowser.context : page.context();
     const meta = new MetasearchClient(request, META_API_URL, credentials);
+    const webApi = webToken ? new WebSearchClient(request, WEB_API_URL, webToken, WEB_SYSTEMS) : null;
+    console.log(
+      webApi
+        ? `[metasearch-compare] Web: gọi API trực tiếp ${WEB_API_URL}/flights/search/ (${WEB_API_TOKEN ? "WEB_API_TOKEN" : `đăng nhập ${WEB_API_CREDENTIALS!.username}@${WEB_API_CREDENTIALS!.clientId}`})`
+        : "[metasearch-compare] Web: bắt qua browser — chưa đặt WEB_API_TOKEN hoặc WEB_API_CLIENT_ID/USERNAME/PASSWORD; response lớn (VD GALILEO_NDC) có thể không đọc được"
+    );
     // HTML trang tool metasearch — dùng dựng bản sao "mở trang metaSearch" cho từng điều kiện trong report.
     const toolHtml = await request
       .get(`${META_API_URL}/static/tools/metasearch/`)
@@ -449,7 +475,14 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
 
         // Mỗi điều kiện dùng tab mới (sạch state/cache của lần search trước).
         const metaPage = review ? await tabs.newPage() : null;
-        const webPage = await tabs.newPage();
+        // Gọi API web trực tiếp thì chỉ mở tab web khi review (để xem); bắt qua browser thì luôn cần tab.
+        const webPage = review || !webApi ? await tabs.newPage() : null;
+        const searchWeb = webApi
+          ? async () => {
+              if (webPage) await webPage.goto(webUrl, { timeout: 120_000 }).catch(() => {});
+              return webApi.search(metaBody, webUrl, d.webTimeoutMs);
+            }
+          : () => new FlightSearchApiCapture(webPage!).searchAndCapture(webUrl, d.webTimeoutMs);
         const searchMeta = metaPage
           ? async () => {
               const tool = new MetasearchToolPage(metaPage, META_API_URL);
@@ -459,14 +492,14 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
             }
           : () => meta.search(metaBody, d.metaTimeoutMs);
         const [webRes, metaRes] = await Promise.all([
-          new FlightSearchApiCapture(webPage).searchAndCapture(webUrl, d.webTimeoutMs),
+          searchWeb(),
           searchMeta().catch((err: Error) => ({ status: 0, ms: 0, data: { message: err.message } as MetasearchResponse })),
         ]);
         if (metaPage) {
           await labelTab(metaPage, `[${c.id} META] ${route}`);
-          await labelTab(webPage, `[${c.id} WEB] ${route}`);
+          if (webPage) await labelTab(webPage, `[${c.id} WEB] ${route}`);
         } else {
-          await webPage.close();
+          await webPage?.close();
         }
 
         fs.writeFileSync(path.join(runDir, "raw", `${c.id}-web.json`), JSON.stringify({ condition: c, ...webRes }, null, 1));
@@ -568,7 +601,7 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
         writeHtmlReport(path.join(runDir, "report.html"), reports, startedAt);
 
         console.log(
-          `[metasearch-compare] ${c.id} ${route} ${dates} ${pax} | meta=${result.metaOffers} khớp=${result.matched} ` +
+          `[metasearch-compare] ${c.id} ${route} ${dates} ${pax} | meta=${result.metaOffers} web=${result.webResults.items} khớp=${result.matched} ` +
             `lệch giá=${result.priceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { CompareResult, DetailRow, FareItem, FareLeg, LegInfo } from "./metasearchCompare";
+import { CompareResult, DetailRow, FareItem, FareLeg } from "./metasearchCompare";
+import { DetailViewLabels, detailView, detailViewCss, detailViewScript } from "./metasearchDetailView";
 
 /**
  * Ghi báo cáo so sánh metasearch vs web ra thư mục riêng cho mỗi lần chạy:
@@ -39,7 +40,6 @@ export class CsvFile<T extends Record<string, unknown>> {
 /** "2026-12-08T09:40:00Z" -> "2026-12-08 09:40" (giữ nguyên giờ API trả, không đổi múi giờ). */
 export const fmtTime = (iso: string) => iso.replace("T", " ").replace(/:00(\.\d+)?Z?$/, "").replace(/Z$/, "");
 export const fmtPrice = (v: number | null | undefined) => (typeof v === "number" ? v.toLocaleString("vi-VN") : "");
-const fmtLeg = (leg?: LegInfo) => (leg ? `${leg.flightNumbers} (${leg.route}) ${fmtTime(leg.depart)} → ${fmtTime(leg.arrive)}` : "");
 
 export type ConditionReport = {
   id: string;
@@ -91,62 +91,11 @@ export function detailToCsvRow(id: string, route: string, r: DetailRow): Record<
 const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-const STATUS_CLASS: Record<string, string> = {
-  "KHỚP": "ok",
-  "LỆCH GIÁ": "diff",
-  "LỆCH PHÍ": "diff",
-  "CHỈ CÓ Ở META": "meta",
-  "CHỈ CÓ Ở WEB": "web",
-};
+const DETAIL_LABELS: DetailViewLabels = { metaPrice: "Giá META (trước voucher)", webPrice: "Giá WEB", fee: "Phí hệ thống", final: "Giá cuối khách thấy" };
 
-function detailTable(rows: DetailRow[]): string {
-  if (!rows.length) return `<p class="muted">Không có dòng nào.</p>`;
-  const body = rows
-    .map((r) => {
-      const out = r.legs.find((l) => l.dir === 0);
-      const back = r.legs.find((l) => l.dir === 1);
-      const metaPrice = r.metaBasePrice !== null
-        ? `<b>${fmtPrice(r.metaBasePrice)}</b>` +
-          (r.voucherDiscount
-            ? `<div class="muted">API trả ${fmtPrice(r.metaPrice)} + voucher ${esc(r.voucherCode)} ${fmtPrice(r.voucherDiscount)}</div>`
-            : "") +
-          (r.metaLegPrices.length > 1 ? `<div class="muted">đi ${fmtPrice(r.metaLegPrices[0])} + về ${fmtPrice(r.metaLegPrices[1])}${r.voucherDiscount ? " (đã trừ voucher)" : ""}</div>` : "")
-        : "";
-      const fee = (v: number | null) => (v === null ? "—" : fmtPrice(v));
-      const fees = r.metaServiceFee !== null || r.webServiceFee !== null
-        ? `meta ${fee(r.metaServiceFee)}<div class="muted">web ${fee(r.webServiceFee)}</div>`
-        : "";
-      const finals = r.metaFinal !== null || r.webFinal !== null
-        ? `meta <b>${fee(r.metaFinal)}</b><div class="muted">web ${fee(r.webFinal)}</div>`
-        : "";
-      const webLegs = r.webLegPrices.length
-        ? r.webLegPrices.map((p, i) => `<div class="muted">${i ? "về" : "đi"}: ${p.map(fmtPrice).join(" / ") || "—"}</div>`).join("")
-        : "";
-      const webPrice = r.webPrices.length || webLegs
-        ? `${r.webClosestPrice !== null ? `<b>${fmtPrice(r.webClosestPrice)}</b>` : ""}${r.webPrices.length > 1 ? `<div class="muted">các mức: ${r.webPrices.map(fmtPrice).join(" / ")}</div>` : ""}${webLegs}`
-        : "";
-      const diff = r.diff ? `<b class="${r.diff > 0 ? "up" : "down"}">${r.diff > 0 ? "+" : ""}${fmtPrice(r.diff)}</b>` : "";
-      return `<tr>
-        <td><span class="tag ${STATUS_CLASS[r.status]}">${esc(r.status)}</span></td>
-        <td>${esc(r.side)}</td>
-        <td>${esc(r.system)}</td>
-        <td>${esc(r.airline)}</td>
-        <td class="mono">${esc(fmtLeg(out))}</td>
-        <td class="mono">${esc(fmtLeg(back))}</td>
-        <td class="num">${metaPrice}</td>
-        <td class="num">${webPrice}</td>
-        <td class="num">${diff}</td>
-        <td>${esc(r.diffLegs)}</td>
-        <td class="num">${fees}</td>
-        <td class="num">${finals}</td>
-        <td>${esc([r.webSource && `web: ${r.webSource}`, r.metaDuplicates > 1 && `${r.metaDuplicates} offer meta trùng`, r.note].filter(Boolean).join(" · "))}</td>
-      </tr>`;
-    })
-    .join("");
-  return `<div class="scroll"><table>
-    <thead><tr><th>Trạng thái</th><th>Bên có</th><th>System</th><th>Hãng</th><th>Chiều đi (số hiệu, chặng, giờ đi → đáp)</th><th>Chiều về</th><th>Giá META (trước voucher)</th><th>Giá WEB</th><th>Chênh (meta − web)</th><th>Chặng lệch</th><th>Phí hệ thống</th><th>Giá cuối khách thấy</th><th>Ghi chú</th></tr></thead>
-    <tbody>${body}</tbody></table></div>`;
-}
+/** "120 hành trình · 26 chặng đi · 28 chặng về" — phân loại kết quả web (chặng lẻ chỉ có ở khứ hồi bán tách chiều). */
+const webBreakdown = (w: CompareResult["webResults"]) =>
+  [`${w.combos} hành trình`, w.outLegs && `${w.outLegs} chặng đi`, w.inLegs && `${w.inLegs} chặng về`].filter(Boolean).join(" · ");
 
 export function writeHtmlReport(filePath: string, conditions: ConditionReport[], startedAt: Date) {
   const summaryRows = conditions
@@ -159,6 +108,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
         <td class="mono">${esc(c.dates)}</td>
         <td>${esc(c.pax)}</td>
         <td class="num">${r.metaOffers}</td>
+        <td class="num">${r.webResults.items}<div class="muted">${esc(webBreakdown(r.webResults))}</div></td>
         <td class="num">${r.matched}</td>
         <td class="num ${r.priceDiffs ? "bad" : ""}">${r.priceDiffs}</td>
         <td class="num ${r.feeDiffs ? "bad" : ""}">${r.feeDiffs}</td>
@@ -172,8 +122,6 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
 
   const sections = conditions
     .map((c) => {
-      const problems = c.result.rows.filter((r) => r.status !== "KHỚP");
-      const matched = c.result.rows.filter((r) => r.status === "KHỚP");
       return `<section id="${esc(c.id)}">
         <h2>${esc(c.id)} · ${esc(c.route)} · ${esc(c.dates)} · ${esc(c.pax)}</h2>
         <p class="muted">${esc(c.description)} — <a href="${esc(c.webUrl)}" target="_blank">mở trang web</a>
@@ -185,9 +133,8 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
           <li>Deeplink meta: ${esc(c.deeplink)}</li>
           ${c.result.warnings.map((w) => `<li class="warn">⚠ ${esc(w)}</li>`).join("")}
         </ul>
-        <h3>Chuyến lệch giá / thiếu (${problems.length})</h3>
-        ${detailTable(problems)}
-        <details><summary>Các hành trình khớp (${matched.length})</summary>${detailTable(matched)}</details>
+        <h3>Chi tiết từng hành trình (${c.result.rows.length})</h3>
+        ${detailView(c.id, c.result.rows, DETAIL_LABELS)}
       </section>`;
     })
     .join("");
@@ -214,6 +161,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   .meta-list { margin: 8px 0; padding-left: 18px; font-size: 13px; }
   .meta-list .warn { color: #92400e; }
   details { margin-top: 12px; } summary { cursor: pointer; color: #2563eb; }
+  ${detailViewCss}
 </style></head><body>
   <h1>So sánh kết quả search: Metasearch đối tác vs Web gốc</h1>
 
@@ -227,11 +175,12 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   <section>
     <h2>Tổng quan</h2>
     <div class="scroll"><table>
-      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Khớp</th><th>Lệch giá</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th>Kết luận</th></tr></thead>
+      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th>Kết luận</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table></div>
   </section>
   ${sections}
+  ${detailViewScript}
 </body></html>`;
   fs.writeFileSync(filePath, html, "utf-8");
 }
