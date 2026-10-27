@@ -7,6 +7,8 @@ export type CapturedSearch = {
   fareData: FareItem[];
   /** Không đọc được body (VD response quá lớn Chrome không cho đọc) — fareData rỗng KHÔNG có nghĩa là 0 kết quả. */
   bodyError?: string;
+  /** Thời gian phản hồi của request này (chỉ có khi gọi API web trực tiếp). */
+  ms?: number;
 };
 
 export type WebSearchCaptureResult = {

@@ -59,6 +59,12 @@ export type ConditionReport = {
   verdict: string;
   /** Lúc gửi search (giờ VN) — mốc tính "cất cánh trong 24h". */
   searchedAt?: string;
+  /** Thời gian phản hồi (ms) của 2 bên; webSystemMs = từng system web, VD "VN 3.2s; VJ 1.1s". */
+  webMs?: number;
+  metaMs?: number;
+  webSystemMs?: string;
+  /** Lệnh yarn chạy lại đúng điều kiện này — hiện ngay trên bảng chi tiết để copy. */
+  rerunCommand?: string;
   result: CompareResult;
 };
 
@@ -110,7 +116,17 @@ export function nearDepartureText(n: CompareResult["nearDeparture"]): string {
   return `${n.total} chuyến${extra ? ` (${extra})` : ""}`;
 }
 
-const verdictClass = (verdict: string) => (verdict.startsWith("KHỚP") ? (verdict.includes("dưới 1k") ? "warn" : "ok") : "diff");
+/**
+ * Màu kết luận: chỉ LỆCH GIÁ lớn / LỆCH PHÍ (hoặc không so được) là lỗi đỏ; lệch < 1k (làm tròn) và
+ * chuyến chỉ 1 bên có là cảnh báo vàng; còn lại xanh.
+ */
+function verdictClass(c: ConditionReport): "ok" | "warn" | "diff" {
+  const r = c.result;
+  if (c.verdict.startsWith("KHÔNG SO ĐƯỢC") || r.priceDiffs + r.feeDiffs) return "diff";
+  return r.smallPriceDiffs + r.metaOnly + r.webOnly ? "warn" : "ok";
+}
+
+const secs = (ms?: number) => (ms == null ? "—" : `${(ms / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}s`);
 
 export function writeHtmlReport(filePath: string, conditions: ConditionReport[], startedAt: Date) {
   const summaryRows = conditions
@@ -129,10 +145,11 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
         <td class="num ${r.smallPriceDiffs ? "warn-t" : ""}">${r.smallPriceDiffs}</td>
         <td class="num ${r.feeDiffs ? "bad" : ""}">${r.feeDiffs}</td>
         <td class="num">${r.withVoucher}</td>
-        <td class="num ${r.metaOnly ? "bad" : ""}">${r.metaOnly}</td>
-        <td class="num ${r.webOnly ? "bad" : ""}">${r.webOnly}</td>
-        <td class="num ${r.nearDeparture?.problems ? "bad" : ""}">${r.nearDeparture?.total || ""}${r.nearDeparture?.problems ? `<div class="muted">${r.nearDeparture.problems} lệch/thiếu</div>` : ""}</td>
-        <td><span class="tag ${verdictClass(c.verdict)}" style="white-space: normal">${esc(c.verdict)}</span></td>
+        <td class="num ${r.metaOnly ? "warn-t" : ""}">${r.metaOnly}</td>
+        <td class="num ${r.webOnly ? "warn-t" : ""}">${r.webOnly}</td>
+        <td class="nowrap">META ${secs(c.metaMs)}<br>WEB ${secs(c.webMs)}${c.webSystemMs ? `<div class="muted">${esc(c.webSystemMs)}</div>` : ""}</td>
+        <td class="num ${r.nearDeparture?.problems ? "warn-t" : ""}">${r.nearDeparture?.total || ""}${r.nearDeparture?.problems ? `<div class="muted">${r.nearDeparture.problems} lệch/thiếu</div>` : ""}</td>
+        <td><span class="tag ${verdictClass(c)}" style="white-space: normal">${esc(c.verdict)}</span></td>
       </tr>`;
     })
     .join("");
@@ -151,6 +168,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
           ${c.result.nearDeparture?.total ? `<li class="near-li">Cất cánh trong 24h kể từ lúc search${c.searchedAt ? ` (${esc(c.searchedAt)})` : ""}: ${esc(nearDepartureText(c.result.nearDeparture))} — nhãn tím <b>≤24h</b> trong bảng, lọc bằng ô "Chỉ chuyến bay trong 24h"</li>` : ""}
           ${c.result.warnings.map((w) => `<li class="warn">⚠ ${esc(w)}</li>`).join("")}
         </ul>
+        ${c.rerunCommand ? `<pre class="rerun">${esc(c.rerunCommand)}</pre>` : ""}
         <h3>Chi tiết từng hành trình (${c.result.rows.length})</h3>
         ${detailView(c.id, c.result.rows, DETAIL_LABELS)}
       </section>`;
@@ -171,6 +189,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: nowrap; }
   .muted { color: #6b7280; font-size: 12px; }
+  .nowrap { white-space: nowrap; }
   .bad { color: #b42318; font-weight: 700; }
   .up { color: #b42318; } .down { color: #1a7f37; }
   .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -178,7 +197,8 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   .tag.meta { background: #fef3c7; color: #92400e; } .tag.web { background: #dbeafe; color: #1e40af; }
   .tag.warn { background: #fef9c3; color: #854d0e; } .warn-t { color: #a16207; font-weight: 700; }
   .meta-list { margin: 8px 0; padding-left: 18px; font-size: 13px; }
-  .meta-list .warn { color: #92400e; } .meta-list .near-li { color: #5b21b6; }
+  .meta-list .warn { color: #92400e; }
+  pre.rerun { margin: 12px 0 0; padding: 6px 10px; background: #f6f8fa; border: 1px solid #eceef1; border-radius: 6px; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; } .meta-list .near-li { color: #5b21b6; }
   details { margin-top: 12px; } summary { cursor: pointer; color: #2563eb; }
   ${detailViewCss}
 </style></head><body>
@@ -194,7 +214,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   <section>
     <h2>Tổng quan</h2>
     <div class="scroll"><table>
-      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th title="Hành trình cất cánh trong 24h kể từ lúc search">Bay trong 24h</th><th>Kết luận</th></tr></thead>
+      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th title="Thời gian phản hồi của 2 bên (web: từng system gọi song song)">Phản hồi</th><th title="Hành trình cất cánh trong 24h kể từ lúc search">Bay trong 24h</th><th>Kết luận</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table></div>
   </section>

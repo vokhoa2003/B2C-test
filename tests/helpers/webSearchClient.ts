@@ -59,6 +59,7 @@ export class WebSearchClient {
       systems.map(async (airline) => {
         // Body đúng như web gửi: thêm `airline` vào từng chiều.
         const requestBody = { ...body, flights: body.flights.map((f) => ({ ...f, airline })) };
+        const started = Date.now();
         try {
           const res = await this.request.post(`${this.baseUrl}/flights/search/`, {
             data: requestBody,
@@ -66,9 +67,9 @@ export class WebSearchClient {
             timeout,
           });
           const json = await res.json().catch(() => ({}));
-          return { requestBody, status: res.status(), fareData: Array.isArray(json?.fareData) ? json.fareData : [] };
+          return { requestBody, status: res.status(), fareData: Array.isArray(json?.fareData) ? json.fareData : [], ms: Date.now() - started };
         } catch (err) {
-          return { requestBody, status: 0, fareData: [], bodyError: (err as Error).message.split("\n")[0] };
+          return { requestBody, status: 0, fareData: [], bodyError: (err as Error).message.split("\n")[0], ms: Date.now() - started };
         }
       })
     );

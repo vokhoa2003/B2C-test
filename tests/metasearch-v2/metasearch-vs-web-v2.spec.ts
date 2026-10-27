@@ -463,6 +463,23 @@ function buildConditions(history: Set<string>, usedTemplates: Set<string>): Cond
   return conditions;
 }
 
+/** Lệnh yarn chạy lại đúng 1 điều kiện này (chế độ chỉ định --from/--to, bỏ qua templates và lịch sử). */
+function rerunCommand(c: Condition): string {
+  return [
+    "yarn compare:metasearch:v2",
+    `--from ${c.from} --to ${c.to}`,
+    `--trip ${c.itinerary ? "rt" : "ow"}`,
+    `--depart ${c.departDate}`,
+    c.returnDate && `--return ${c.returnDate}`,
+    `--adt ${c.adults} --chd ${c.children} --inf ${c.infants}`,
+    AIRLINE_FILTER.length && `--airline ${AIRLINE_FILTER.join(",")}`,
+  ].filter(Boolean).join(" ");
+}
+
+const systemOf = (s: { requestBody: Record<string, unknown> | null }) =>
+  (s.requestBody?.flights as { airline?: string }[] | undefined)?.[0]?.airline ?? "?";
+const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+
 function buildWebResultUrl(c: Condition): string {
   const params = new URLSearchParams({
     adult: String(c.adults),
@@ -555,7 +572,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
       "id", "description", "route", "flightType", "tripType", "departDate", "returnDate", "pax",
       "webStatus", "metaStatus", "webMs", "metaMs", "webRawItems", "metaRawItems",
       "metaOffers", "matched", "priceDiffs", "smallPriceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
-      "searchedAt", "within24h", "within24hProblems", "metaDeeplinkRoute", "verdict", "webUrl",
+      "searchedAt", "within24h", "within24hProblems", "metaDeeplinkRoute", "verdict", "webUrl", "webSystemMs",
     ]);
     const detailsCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "details.csv"), [...DETAIL_COLUMNS]);
 
@@ -662,7 +679,9 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         const reloadNote = webRes.reloads ? `, tải lại trang ${webRes.reloads} lần` : "";
         const webStatus = webRes.timedOut
           ? `LỖI: ${webRes.error}`
-          : `OK ${Math.round(webRes.ms / 1000)}s${reloadNote} (${webRes.searches.map((s) => `${(s.requestBody?.flights as { airline?: string }[] | undefined)?.[0]?.airline ?? "?"}=${s.status}/${s.fareData.length}`).join(" ")})`;
+          : `OK ${Math.round(webRes.ms / 1000)}s${reloadNote} (${webRes.searches.map((s) => `${systemOf(s)}=${s.status}/${s.fareData.length}${s.ms != null ? ` ${secs(s.ms)}` : ""}`).join(" ")})`;
+        // Thời gian phản hồi từng system web (gọi API trực tiếp: các system gọi song song, tổng = system chậm nhất).
+        const webSystemMs = webRes.searches.filter((s) => s.ms != null).map((s) => `${systemOf(s)} ${secs(s.ms!)}`).join("; ");
         const metaOk = metaRes.status === 200 && !metaRes.data.errorCode;
         const metaStatus = metaOk
           ? `OK ${metaRes.status} ${(metaRes.ms / 1000).toFixed(1)}s (${allMetaItems.length} item)`
@@ -670,13 +689,14 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         // 1 bên không lấy được dữ liệu thì không được kết luận KHỚP (0 = 0 chỉ là do thiếu dữ liệu).
         const verdict = webRes.timedOut || !metaOk
           ? `KHÔNG SO ĐƯỢC (${[webRes.timedOut && `web ${webRes.error}`, !metaOk && "meta lỗi"].filter(Boolean).join(", ")})`
-          : result.priceDiffs + result.feeDiffs + result.metaOnly + result.webOnly === 0
-            // Chênh < 1k là do làm tròn → vẫn KHỚP, kèm cảnh báo.
-            ? "KHỚP" + (result.smallPriceDiffs ? ` · lệch giá dưới 1k: ${result.smallPriceDiffs}` : "")
-            : [
+          : result.priceDiffs + result.feeDiffs + result.smallPriceDiffs + result.metaOnly + result.webOnly === 0
+            ? "KHỚP"
+            // Chỉ lệch giá lớn / lệch phí mới là LỖI. Lệch < 1k (làm tròn) và chuyến chỉ 1 bên có → CẢNH BÁO (vàng).
+            : (result.priceDiffs + result.feeDiffs ? "" : "CẢNH BÁO · ") +
+              [
                 result.priceDiffs && `lệch giá ${result.priceDiffs}`,
-                result.smallPriceDiffs && `lệch giá dưới 1k ${result.smallPriceDiffs}`,
                 result.feeDiffs && `lệch phí ${result.feeDiffs}`,
+                result.smallPriceDiffs && `lệch giá dưới 1k ${result.smallPriceDiffs}`,
                 result.metaOnly && `chỉ meta có ${result.metaOnly}`,
                 result.webOnly && `chỉ web có ${result.webOnly}`,
               ].filter(Boolean).join(", ");
@@ -711,6 +731,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           metaDeeplinkRoute: deeplink,
           verdict,
           webUrl,
+          webSystemMs,
         }]);
         detailsCsv.append(result.rows.map((r) => detailToCsvRow(c.id, route, r)));
 
@@ -735,6 +756,8 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         reports.push({
           id: c.id, description, route, dates, pax, webStatus, metaStatus, deeplink, webUrl,
           metaSnapshotHref, metaToolHref, verdict, result, searchedAt: searchedAt.toLocaleString("vi-VN"),
+          webMs: webRes.ms, metaMs: metaRes.ms, webSystemMs,
+          rerunCommand: rerunCommand(c),
         });
         // Chỉ ghi lịch sử khi so được cả 2 bên — điều kiện lỗi/timeout để lần sau chạy lại.
         if (!webRes.timedOut && metaOk) {
@@ -753,6 +776,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
             `lệch giá=${result.priceDiffs} lệch<1k=${result.smallPriceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);
+        console.log(`    ⏱ phản hồi: meta ${secs(metaRes.ms)} · web ${secs(webRes.ms)}${webSystemMs ? ` (${webSystemMs})` : ""}`);
         if (near) console.log(`    ⏱ cất cánh trong 24h kể từ lúc search: ${near}`);
         result.warnings.forEach((w) => console.log(`    ⚠ ${w}`));
 

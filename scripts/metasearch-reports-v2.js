@@ -46,15 +46,30 @@ function parseCsv(text) {
 }
 
 /**
- * Trạng thái 1 điều kiện: "fail" khi 1 bên lỗi/timeout — kể cả báo cáo cũ (trước khi có
- * kết luận "KHÔNG SO ĐƯỢC") từng ghi nhầm "KHỚP" dù web timeout —, "ok" khi khớp, còn lại "diff".
+ * Trạng thái 1 điều kiện (tính lại từ số liệu trong summary.csv, áp dụng cả báo cáo cũ):
+ * - "fail": 1 bên lỗi/timeout — kể cả báo cáo cũ từng ghi nhầm "KHỚP" dù web timeout;
+ * - "diff": có LỆCH GIÁ lớn hoặc LỆCH PHÍ — lỗi thật (đỏ);
+ * - "warn": chỉ lệch giá dưới 1k (làm tròn) và/hoặc chuyến chỉ meta / chỉ web có — cảnh báo, không phải lỗi (vàng);
+ * - "ok": khớp hết.
  */
+const num = (v) => Number(v) || 0;
 function conditionState(c) {
   const verdict = c.verdict || "";
   if (verdict.startsWith("KHÔNG SO ĐƯỢC") || /^(TIMEOUT|LỖI)/.test(c.webStatus || "") || /^LỖI/.test(c.metaStatus || "")) return "fail";
-  // "KHỚP · lệch giá dưới 1k: N" (chênh do làm tròn) vẫn tính là khớp.
-  return verdict.startsWith("KHỚP") ? "ok" : "diff";
+  if (num(c.priceDiffs) + num(c.feeDiffs)) return "diff";
+  return num(c.smallPriceDiffs) + num(c.metaOnly) + num(c.webOnly) ? "warn" : "ok";
 }
+/** Nhãn cảnh báo: "Cảnh báo · lệch < 1k 2, chỉ meta có 3". */
+const warnLabel = (c) =>
+  "Cảnh báo · " +
+  [num(c.smallPriceDiffs) && `lệch < 1k ${c.smallPriceDiffs}`, num(c.metaOnly) && `chỉ meta có ${c.metaOnly}`, num(c.webOnly) && `chỉ web có ${c.webOnly}`]
+    .filter(Boolean).join(", ");
+/** "3,2s" — thời gian phản hồi (summary.csv: webMs / metaMs). */
+const secs = (ms) => (ms === "" || ms == null || isNaN(Number(ms)) ? "—" : `${(Number(ms) / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}s`);
+const avgMs = (list, key) => {
+  const vals = list.map((c) => c[key]).filter((v) => v !== "" && v != null && !isNaN(Number(v))).map(Number);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : "";
+};
 
 /** "2026-10-22T16-03-55-880Z" → Date */
 const dirToDate = (name) => new Date(name.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "T$1:$2:$3.$4Z"));
@@ -78,6 +93,7 @@ function loadRuns() {
         hasHtml: !!report && report.endsWith("report.html"),
         conditions,
         ok: states.filter((s) => s === "ok").length,
+        warn: states.filter((s) => s === "warn").length,
         failed: states.filter((s) => s === "fail").length,
         diff: states.filter((s) => s === "diff").length,
       };
@@ -89,7 +105,7 @@ function loadRuns() {
 const fmtTime = (d) => d.toLocaleString("vi-VN", { hour12: false });
 const routesText = (run) =>
   run.conditions
-    .map((c) => `${c.route} ${c.tripType === "roundtrip" ? "KH" : "1C"}${{ ok: "", diff: " ✗lệch", fail: " ✗lỗi" }[conditionState(c)]}`)
+    .map((c) => `${c.route} ${c.tripType === "roundtrip" ? "KH" : "1C"}${{ ok: "", warn: " ⚠cảnh báo", diff: " ✗lệch giá", fail: " ✗lỗi" }[conditionState(c)]}`)
     .join(", ");
 const searchable = (run) =>
   [run.name, ...run.conditions.flatMap((c) => [c.route, c.description, c.verdict, c.flightType, c.tripType])].join(" ").toLowerCase();
@@ -109,8 +125,13 @@ function writeIndex(runs) {
       const conds = run.conditions
         .map((c) => {
           const cls = conditionState(c);
-          const label = cls === "fail" && !(c.verdict || "").startsWith("KHÔNG SO ĐƯỢC") ? `KHÔNG SO ĐƯỢC (${c.webStatus})` : c.verdict || "?";
-          return `<li><span class="tag ${cls}">${esc(label)}</span> <b>${esc(c.route)}</b> · ${esc(c.tripType === "roundtrip" ? "khứ hồi" : "1 chiều")} · ${esc(c.departDate)}${c.returnDate ? " / " + esc(c.returnDate) : ""} · ${esc(c.pax)}</li>`;
+          const label =
+            cls === "fail" && !(c.verdict || "").startsWith("KHÔNG SO ĐƯỢC") ? `KHÔNG SO ĐƯỢC (${c.webStatus})`
+            : cls === "warn" ? warnLabel(c)
+            : cls === "ok" ? "KHỚP"
+            : c.verdict || "?";
+          return `<li><span class="tag ${cls}">${esc(label)}</span> <b>${esc(c.route)}</b> · ${esc(c.tripType === "roundtrip" ? "khứ hồi" : "1 chiều")} · ${esc(c.departDate)}${c.returnDate ? " / " + esc(c.returnDate) : ""} · ${esc(c.pax)}` +
+            ` <span class="time" title="Thời gian phản hồi${c.webSystemMs ? " — web: " + esc(c.webSystemMs) : ""}">⏱ meta ${secs(c.metaMs)} · web ${secs(c.webMs)}</span></li>`;
         })
         .join("");
       return `<tr data-search="${esc(searchable(run))}">
@@ -118,8 +139,10 @@ function writeIndex(runs) {
         <td class="nowrap">${esc(fmtTime(run.at))}</td>
         <td class="num">${run.conditions.length}</td>
         <td class="num ok-t">${run.ok}</td>
+        <td class="num ${run.warn ? "warn-t" : ""}">${run.warn}</td>
         <td class="num ${run.diff ? "bad" : ""}">${run.diff}</td>
         <td class="num ${run.failed ? "bad" : ""}">${run.failed}</td>
+        <td class="nowrap">${run.conditions.length ? `META ${secs(avgMs(run.conditions, "metaMs"))}<br>WEB ${secs(avgMs(run.conditions, "webMs"))}` : "—"}</td>
         <td><ul>${conds || '<li class="muted">Không có summary.csv (lần chạy bị dừng giữa chừng?)</li>'}</ul></td>
         <td class="nowrap">${href ? `<a href="${esc(href)}" target="_blank">${run.hasHtml ? "Mở báo cáo" : "Xem tóm tắt (định dạng cũ)"}</a>` : '<span class="muted">—</span>'}</td>
       </tr>`;
@@ -144,18 +167,20 @@ function writeIndex(runs) {
   .num { text-align: right; font-variant-numeric: tabular-nums; } .nowrap { white-space: nowrap; }
   .bad { color: #b42318; font-weight: 700; } .ok-t { color: #166534; }
   .tag { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .tag.ok { background: #dcfce7; color: #166534; } .tag.diff { background: #fee2e2; color: #991b1b; } .tag.fail { background: #fef3c7; color: #92400e; }
+  .tag.ok { background: #dcfce7; color: #166534; } .tag.diff { background: #fee2e2; color: #991b1b; } .tag.fail { background: #ffedd5; color: #9a3412; }
+  .tag.warn { background: #fef9c3; color: #854d0e; } .warn-t { color: #a16207; font-weight: 700; }
+  .time { color: #6b7280; font-size: 12px; white-space: nowrap; }
   a { color: #2563eb; }
 </style></head><body>
   <h1>Báo cáo so sánh Metasearch vs Web — v2</h1>
   <p class="muted">${runs.length} lần chạy · tạo lúc ${esc(fmtTime(new Date()))} · chạy lại <code>yarn compare:metasearch:v2:reports</code> để cập nhật danh sách</p>
   <div class="bar">
     <input type="search" id="q" placeholder="Lọc theo route, ngày, kết luận… (VD: SGN, khứ hồi, lệch)">
-    <label><input type="checkbox" id="onlyProblem"> Chỉ lần chạy có lệch / không so được</label>
+    <label><input type="checkbox" id="onlyProblem"> Chỉ lần chạy có lệch giá / không so được</label>
     <span id="count" class="muted"></span>
   </div>
   <div class="wrap"><table>
-    <thead><tr><th>#</th><th>Thời gian</th><th>Điều kiện</th><th>Khớp</th><th>Lệch</th><th>Không so được</th><th>Chi tiết</th><th>Báo cáo</th></tr></thead>
+    <thead><tr><th>#</th><th>Thời gian</th><th>Điều kiện</th><th>Khớp</th><th title="Lệch giá dưới 1k / chuyến chỉ 1 bên có — không phải lỗi">Cảnh báo</th><th title="Lệch giá lớn / lệch phí">Lệch giá</th><th>Không so được</th><th title="Thời gian phản hồi trung bình mỗi điều kiện">Phản hồi TB</th><th>Chi tiết</th><th>Báo cáo</th></tr></thead>
     <tbody id="rows">${rows}</tbody>
   </table></div>
 <script>
@@ -242,7 +267,7 @@ const filtered = runs.filter((r) => !find || searchable(r).includes(find));
 console.log(`${filtered.length}/${runs.length} lần chạy${find ? ` khớp "${find}"` : ""} (mới nhất = #1):\n`);
 for (const run of filtered.slice(0, limit)) {
   const status = run.conditions.length
-    ? `${run.conditions.length} đk: ${run.ok} khớp, ${run.diff} lệch, ${run.failed} không so được`
+    ? `${run.conditions.length} đk: ${run.ok} khớp, ${run.warn} cảnh báo, ${run.diff} lệch giá, ${run.failed} không so được · TB meta ${secs(avgMs(run.conditions, "metaMs"))} / web ${secs(avgMs(run.conditions, "webMs"))}`
     : "không có summary.csv";
   console.log(`#${String(run.index).padEnd(3)} ${fmtTime(run.at).padEnd(20)} ${status}${run.hasHtml ? "" : "  [định dạng cũ]"}`);
   if (run.conditions.length) console.log(`     ${routesText(run)}`);

@@ -1,5 +1,5 @@
 {
-  "conditionsPerRun": 20,
+  "conditionsPerRun": 100,
   "filters": {
     "tripType": "all",
     "routeType": "all"
