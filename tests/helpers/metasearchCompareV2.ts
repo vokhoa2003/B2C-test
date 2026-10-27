@@ -121,6 +121,8 @@ export type DetailRow = {
   /** Số item meta trùng y hệt (cùng hành trình, system, giá) được gộp vào dòng này. */
   metaDuplicates: number;
   note: string;
+  /** Số giờ từ lúc search tới giờ cất cánh chặng đi (markNearDeparture gắn); < 0 = đã qua giờ bay. */
+  hoursToDepart?: number | null;
 };
 
 export type CompareResult = {
@@ -145,7 +147,39 @@ export type CompareResult = {
    * VD "WEB VJ: 21 hạng vé — VD VJ975: totalAmount 6.757.000 ≠ tổng theo số khách 10.197.000 (…)".
    */
   warnings: string[];
+  /**
+   * Hành trình cất cánh trong NEAR_DEPARTURE_HOURS giờ kể từ lúc search (markNearDeparture gắn):
+   * `total` dòng, `problems` dòng lệch/thiếu, `departed` dòng đã qua giờ bay mà vẫn được trả về.
+   */
+  nearDeparture?: { total: number; problems: number; departed: number };
 };
+
+/** Chuyến cất cánh trong chừng này giờ kể từ lúc search = "trong 24h" (đóng bán sớm, giá giờ chót…). */
+export const NEAR_DEPARTURE_HOURS = 24;
+
+/**
+ * Gắn `hoursToDepart` cho từng dòng = giờ cất cánh chặng đi đầu tiên − lúc search, và đếm `nearDeparture`.
+ * `startTime` API trả là giờ địa phương sân bay đi (dù có hậu tố "Z") → đọc như giờ đồng hồ, so với giờ máy
+ * chạy test (VN). Chặng xuất phát ở nước ngoài lệch múi giờ so với VN → sai số bằng độ lệch múi giờ.
+ */
+export function markNearDeparture(result: CompareResult, searchedAt: Date): void {
+  const near = { total: 0, problems: 0, departed: 0 };
+  for (const row of result.rows) {
+    const out = row.legs.find((l) => l.dir === 0) ?? row.legs[0];
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(out?.depart ?? "");
+    if (!m) {
+      row.hoursToDepart = null;
+      continue;
+    }
+    const depart = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    row.hoursToDepart = Math.round(((depart.getTime() - searchedAt.getTime()) / 3_600_000) * 100) / 100;
+    if (row.hoursToDepart >= NEAR_DEPARTURE_HOURS) continue;
+    near.total++;
+    if (row.hoursToDepart < 0) near.departed++;
+    if (row.status !== "KHỚP" && row.status !== "Lệch giá dưới 1k") near.problems++;
+  }
+  result.nearDeparture = near;
+}
 
 function totalAmountWarnings(side: "WEB" | "META", items: FareItem[]): string[] {
   const bySystem = new Map<string, { count: number; example: string }>();

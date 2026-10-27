@@ -28,6 +28,8 @@ export type DetailRowLike = {
   webSource: string;
   metaDuplicates: number;
   note: string;
+  /** Giờ từ lúc search tới giờ cất cánh chặng đi (chỉ v2 gắn) — < 24 thì đánh dấu "trong 24h". */
+  hoursToDepart?: number | null;
 };
 
 export type DetailViewLabels = {
@@ -49,7 +51,7 @@ export function detailView(condId: string, rows: DetailRowLike[], labels: Detail
     mp: r.metaPrice, vc: r.voucherCode, vd: r.voucherDiscount, mb: r.metaBasePrice, ml: r.metaLegPrices,
     wc: r.webClosestPrice, wp: r.webPrices, wl: r.webLegPrices, d: r.diff, dl: r.diffLegs,
     mf: r.metaServiceFee, wf: r.webServiceFee, mt: r.metaFinal, wt: r.webFinal,
-    src: r.webSource, dup: r.metaDuplicates, n: r.note,
+    src: r.webSource, dup: r.metaDuplicates, n: r.note, h: r.hoursToDepart,
   }));
   // Thoát "<" để chuỗi "</script>" trong dữ liệu không đóng thẻ.
   const json = JSON.stringify({ labels, rows: data }).replace(/</g, "\\u003c");
@@ -92,6 +94,10 @@ export const detailViewCss = `
   .tag.warn { background: #fef9c3; color: #854d0e; }
   .dv-sys .warn-t { color: #a16207; font-weight: 600; }
   .dv .small-diff { color: #a16207; font-weight: 600; }
+  .dv .near { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #ede9fe; color: #5b21b6; font-family: system-ui, sans-serif; }
+  .dv .near.past { background: #fee2e2; color: #991b1b; }
+  .dv-near { font-size: 12px; display: inline-flex; gap: 4px; align-items: center; color: #5b21b6; white-space: nowrap; }
+  .dv-bar .dv-near input { min-width: 0; padding: 0; }
 `;
 
 /** JS chạy trong trang: render mọi `.dv` từ JSON tương ứng. Không dùng regex/backslash để an toàn trong template. */
@@ -122,6 +128,15 @@ export const detailViewScript = `<script>
     const days = Math.round((Date.parse(String(arr).slice(0, 10)) - Date.parse(String(dep).slice(0, 10))) / 86400000);
     return days > 0 ? t + "+" + days : t;
   };
+  // Chuyến cất cánh trong 24h kể từ lúc search (h = số giờ) → nhãn tím; đã qua giờ bay → nhãn đỏ.
+  const NEAR_HOURS = 24;
+  const isNear = (r) => typeof r.h === "number" && r.h < NEAR_HOURS;
+  const nearTag = (r) => {
+    if (!isNear(r)) return "";
+    if (r.h < 0) return '<span class="near past" title="Giờ cất cánh đã qua lúc search">đã qua giờ bay</span>';
+    const mins = Math.round(r.h * 60);
+    return '<span class="near" title="Cất cánh trong 24h kể từ lúc search">≤24h · còn ' + Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") + "</span>";
+  };
 
   document.querySelectorAll(".dv").forEach((root) => {
     const id = root.dataset.cond;
@@ -129,7 +144,8 @@ export const detailViewScript = `<script>
     if (!rows.length) { root.innerHTML = '<p class="muted">Không có hành trình nào.</p>'; return; }
 
     const problems = rows.filter(isProblem).length;
-    const st = { status: problems ? "PROBLEMS" : "ALL", system: "", q: "", sort: "default", page: 0, size: 25, open: new Set() };
+    const nearCount = rows.filter(isNear).length;
+    const st = { status: problems ? "PROBLEMS" : "ALL", system: "", q: "", near: false, sort: "default", page: 0, size: 25, open: new Set() };
 
     // Tóm tắt theo system
     const bySys = new Map();
@@ -146,6 +162,7 @@ export const detailViewScript = `<script>
       '<div class="dv-bar"><div class="dv-chips"></div>' +
       '<select class="dv-sort"><option value="default">Sắp xếp: mặc định</option><option value="diff">Chênh lệch lớn nhất</option><option value="price">Giá META thấp nhất</option><option value="depart">Giờ đi sớm nhất</option></select>' +
       '<input class="dv-q" type="search" placeholder="Tìm số hiệu / chặng (VD VJ975, ICN)">' +
+      (nearCount ? '<label class="dv-near"><input type="checkbox" class="dv-near-cb"> Chỉ chuyến bay trong 24h (' + nearCount + ")</label>" : "") +
       '<select class="dv-size"><option>25</option><option>50</option><option>100</option></select></div>' +
       '<div class="scroll"><table><thead><tr><th></th><th>Trạng thái</th><th>System</th><th>Hành trình</th>' +
       '<th class="num">' + esc(labels.metaPrice) + '</th><th class="num">' + esc(labels.webPrice) + '</th><th class="num">Chênh</th><th class="num">' + esc(labels.fee) + '</th></tr></thead><tbody></tbody></table></div>' +
@@ -177,6 +194,7 @@ export const detailViewScript = `<script>
     $(".dv-sort").addEventListener("change", (e) => { st.sort = e.target.value; st.page = 0; render(); });
     $(".dv-size").addEventListener("change", (e) => { st.size = Number(e.target.value); st.page = 0; render(); });
     $(".dv-q").addEventListener("input", (e) => { st.q = e.target.value.trim().toLowerCase(); st.page = 0; render(); });
+    if (nearCount) $(".dv-near-cb").addEventListener("change", (e) => { st.near = e.target.checked; st.page = 0; render(); });
 
     const legLine = (l) =>
       '<div><span class="d">' + (l[0] ? "Về" : "Đi") + "</span>" + esc(l[1]) + " " + esc(l[2]) +
@@ -197,7 +215,7 @@ export const detailViewScript = `<script>
       if (r.wc != null) webLines.push("<b>" + money(r.wc) + "</b>");
       if (r.wp && r.wp.length > 1) webLines.push('<div class="muted">các mức hạng vé:</div>' + levels(r.wp, r.mb));
       (r.wl || []).forEach((p, i) => p.length && webLines.push('<div class="muted">' + (i ? "về" : "đi") + ":</div>" + levels(p, r.ml ? r.ml[i] : null)));
-      const notes = [r.dl && "Chặng lệch: " + r.dl, r.src && "Nguồn web: " + r.src, r.dup > 1 && r.dup + " offer meta trùng", r.n].filter(Boolean);
+      const notes = [typeof r.h === "number" && (r.h < 0 ? "Đã qua giờ bay " + Math.abs(r.h).toFixed(1) + "h lúc search" : "Cất cánh sau " + r.h.toFixed(1) + "h kể từ lúc search"), r.dl && "Chặng lệch: " + r.dl, r.src && "Nguồn web: " + r.src, r.dup > 1 && r.dup + " offer meta trùng", r.n].filter(Boolean);
       return '<div class="grid">' +
         '<div class="h"></div><div class="h">META</div><div class="h">WEB</div>' +
         "<div>" + esc(labels.metaPrice.replace(" META", "")) + "</div><div>" + (metaLines.join("") || "—") + "</div><div>" + (webLines.join("") || "—") + "</div>" +
@@ -211,6 +229,7 @@ export const detailViewScript = `<script>
       let list = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
         (st.status === "ALL" || (st.status === "PROBLEMS" ? isProblem(r) : r.s === st.status)) &&
         (!st.system || r.sy === st.system) &&
+        (!st.near || isNear(r)) &&
         (!st.q || (r.lg.map((l) => l[1] + " " + l[2]).join(" ") + " " + r.sy + " " + r.al).toLowerCase().includes(st.q)));
       const by = {
         diff: (a, b) => Math.abs(b.r.d || 0) - Math.abs(a.r.d || 0),
@@ -232,7 +251,7 @@ export const detailViewScript = `<script>
           '<td class="caret">' + (open ? "▾" : "▸") + "</td>" +
           '<td><span class="tag ' + (TAG[r.s] || "") + '">' + esc(r.s) + "</span></td>" +
           "<td>" + esc(r.sy) + (r.al && r.al !== r.sy ? ' <span class="muted">' + esc(r.al) + "</span>" : "") + "</td>" +
-          '<td class="it">' + r.lg.map(legLine).join("") + "</td>" +
+          '<td class="it">' + r.lg.map((l, k) => (k ? legLine(l) : legLine(l).replace("</span></div>", "</span>" + nearTag(r) + "</div>"))).join("") + "</td>" +
           '<td class="num">' + (r.mb != null ? money(r.mb) : "—") + (r.vd ? '<div class="muted">voucher −' + short(r.vd) + "</div>" : "") + "</td>" +
           '<td class="num">' + (r.wc != null ? money(r.wc) : "—") + (r.wp && r.wp.length > 1 ? '<div class="muted">' + r.wp.length + " mức</div>" : "") + "</td>" +
           '<td class="num">' + diff + "</td>" +

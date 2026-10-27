@@ -8,7 +8,18 @@ import { FlightSearchApiCapture } from "../pages/flight/FlightSearchApiCapture";
 import { WebSearchClient, WebSystems, loginWebApi } from "../helpers/webSearchClient";
 import { MetasearchToolPage } from "../pages/metasearch/MetasearchToolPage";
 import { labelTab, launchReviewBrowser } from "../helpers/reviewBrowser";
-import { FareItem, compareMetaAgainstWeb } from "../helpers/metasearchCompareV2";
+import { FareItem, compareMetaAgainstWeb, markNearDeparture } from "../helpers/metasearchCompareV2";
+import {
+  AIRPORT_CATALOG,
+  AIRPORTS_FILE,
+  airportLabel,
+  airportsInRegions,
+  allInternational,
+  domesticAirports,
+  featuredInternational,
+  findAirport,
+  knownRegions,
+} from "../helpers/airportCatalog";
 import { appendHistory, historyKey, loadHistory, HISTORY_FILE } from "../helpers/metasearchHistoryV2";
 import {
   ConditionReport,
@@ -17,6 +28,7 @@ import {
   createRunDir,
   detailToCsvRow,
   writeHtmlReport,
+  nearDepartureText,
   writeMetaSnapshotHtml,
   writeMetaToolSnapshot,
 } from "../helpers/metasearchReportV2";
@@ -62,7 +74,23 @@ type ConditionTemplate = {
   infants: number;
   /** Nhóm chặng của case: chọn ngẫu nhiên 1 cặp (cả 2 chiều). Bỏ trống = theo `airports` như cũ. */
   routes?: [string, string][];
-  /** Ngày bay = hôm nay + [min, max] ngày. Bỏ trống = theo defaults (nội địa 20+, quốc tế 40+). */
+  /**
+   * Quốc tế: đầu nước ngoài chọn ngẫu nhiên trong các vùng của danh mục sân bay (public/PLAN/airports.json,
+   * khớp `subject` hoặc `continent`), VD ["Đông Nam Á", "Đông dương"], ["Châu Âu"]. Đầu Việt Nam lấy từ `vnEnd`.
+   */
+  region?: string[];
+  /** Đầu Việt Nam cho `region` / `pool` (bỏ trống = airports.vnInternationalGateways). */
+  vnEnd?: string[];
+  /**
+   * Quốc tế, không có `routes`/`region`: chọn đầu nước ngoài trong danh mục — "featured" (mặc định, điểm web
+   * đã xếp nhóm, gần như luôn có chuyến) hoặc "all" (mọi sân bay thế giới trong file, case khám phá).
+   */
+  pool?: "featured" | "all";
+  /**
+   * Ngày bay = hôm nay + [min, max] ngày. Bỏ trống = theo defaults (nội địa 20+, quốc tế 40+).
+   * [0, 1] = case 24h: search ngay hôm nay / ngày mai — chuyến cất cánh trong 24h kể từ lúc search được
+   * đánh dấu "≤24h" trong báo cáo (đánh dấu cho mọi điều kiện, case này để chắc chắn có các chuyến đó).
+   */
   daysAhead?: [number, number];
   /** Khứ hồi: ngày về = ngày đi + [min, max] ngày (0 = về trong ngày). Bỏ trống = theo defaults. */
   stayDays?: [number, number];
@@ -153,7 +181,18 @@ const WEB_SYSTEMS: WebSystems = {
   ...DATA.webSystems,
 };
 // loadTestData chỉ merge 1 cấp: JSON cũ thiếu key mới trong `airports` thì lấy mặc định.
-const AIRPORTS = { ...DEFAULT_DATA.airports, ...DATA.airports };
+// Có danh mục sân bay (public/PLAN/airports.json) thì sân bay nội địa lấy theo isDomestic của file, sân bay
+// quốc tế = điểm web đã xếp nhóm + danh sách trong JSON cấu hình; không có file thì dùng JSON như cũ.
+const AIRPORTS = (() => {
+  const base = { ...DEFAULT_DATA.airports, ...DATA.airports };
+  if (!AIRPORT_CATALOG.size) return base;
+  return {
+    ...base,
+    domestic: [...new Set([...domesticAirports(), ...base.domestic])],
+    international: [...new Set([...featuredInternational(), ...base.international])],
+  };
+})();
+const isDomesticCode = (code: string) => findAirport(code)?.isDomestic ?? AIRPORTS.domestic.includes(code);
 
 function parseFilter<T extends string>(name: string, value: string | undefined, allowed: T[]): T | "all" {
   const v = (value || "all").trim().toLowerCase();
@@ -192,7 +231,7 @@ function customTemplate(): ConditionTemplate | null {
   if (!from || !to) return null;
   const tripType = TRIP_FILTER !== "all" ? TRIP_FILTER : process.env.META_RETURN ? "roundtrip" : "oneway";
   const { adults, children, infants } = PAX_OVERRIDE ?? { adults: 1, children: 0, infants: 0 };
-  const isDomestic = AIRPORTS.domestic.includes(from) && AIRPORTS.domestic.includes(to);
+  const isDomestic = isDomesticCode(from) && isDomesticCode(to);
   return {
     description: `Chỉ định: ${from}${tripType === "roundtrip" ? "⇄" : "→"}${to}, ${tripType === "roundtrip" ? "khứ hồi" : "1 chiều"}, ${adults} NL ${children} TE ${infants} EB`,
     routeType: isDomestic ? "domestic" : "international",
@@ -220,6 +259,9 @@ const invalidTemplates = DATA.templates
       total > MAX_PAX && `tổng ${total} khách > ${MAX_PAX}`,
       [t.adults, t.children, t.infants].some((n) => !Number.isInteger(n) || n < 0) && "số khách phải là số nguyên ≥ 0",
       t.tripType === "oneway" && (t.returnDate || t.stayDays) && "1 chiều không dùng returnDate/stayDays",
+      (t.region || t.pool) && !AIRPORT_CATALOG.size && `cần danh mục sân bay ${AIRPORTS_FILE} cho region/pool`,
+      t.region && AIRPORT_CATALOG.size && !airportsInRegions(t.region).length &&
+        `region ${JSON.stringify(t.region)} không có sân bay nào — vùng có trong file: ${knownRegions().join(", ")}`,
     ].filter(Boolean);
     return errors.length ? `${t.id ?? t.description}: ${errors.join(", ")}` : null;
   })
@@ -227,10 +269,21 @@ const invalidTemplates = DATA.templates
 if (invalidTemplates.length) {
   throw new Error(`metasearch-vs-web-v2.json có template không hợp lệ:\n- ${invalidTemplates.join("\n- ")}`);
 }
+/** Mã sân bay trong template không có trong danh mục → chỉ cảnh báo (vẫn search, có thể web không hỗ trợ). */
+const unknownCodes = AIRPORT_CATALOG.size
+  ? [...new Set(DATA.templates.flatMap((t) => [...(t.routes ?? []).flat(), ...(t.vnEnd ?? []), t.from, t.to]).filter((c): c is string => !!c))]
+      .filter((c) => !findAirport(c))
+  : [];
+const AIRPORT_STATUS = AIRPORT_CATALOG.size
+  ? `Danh mục sân bay: ${AIRPORT_CATALOG.size} điểm (${AIRPORTS.domestic.length} nội địa, ${featuredInternational().length} quốc tế đã xếp nhóm, ${allInternational().length} sân bay quốc tế) — ${path.relative(process.cwd(), AIRPORTS_FILE)}` +
+    (unknownCodes.length ? ` · ⚠ mã không có trong danh mục: ${unknownCodes.join(", ")}` : "")
+  : `Không thấy danh mục sân bay ${AIRPORTS_FILE} — dùng danh sách sân bay trong metasearch-vs-web-v2.json`;
+
 /** Khoá xoay vòng: case đã chạy (lưu trong lịch sử) thì xếp sau case chưa chạy. */
 const templateKey = (t: ConditionTemplate) => t.id ?? t.description;
 
 const CUSTOM_TEMPLATE = customTemplate();
+const NEAR_24H = process.env.META_NEAR_24H === "1";
 const CONDITIONS_PER_RUN = CUSTOM_TEMPLATE ? 1 : Number(process.env.META_CONDITIONS) || DATA.conditionsPerRun;
 // Cờ --case PAX-09,ROUTE-07 (env META_CASES): chỉ chạy các case study này (khớp mã hoặc tiền tố, VD "PAX").
 const CASE_FILTER = (process.env.META_CASES || "").split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
@@ -243,7 +296,9 @@ const TEMPLATES = CUSTOM_TEMPLATE
         PAX_OVERRIDE
           ? { ...t, ...PAX_OVERRIDE, description: `${t.description.split(",").slice(0, 2).join(",")}, ${paxText(PAX_OVERRIDE)} (theo cờ)` }
           : t
-      );
+      )
+      // Cờ --24h (env META_NEAR_24H=1): giữ ngẫu nhiên khách/chặng/hành trình của case, chỉ ép ngày bay hôm nay / ngày mai.
+      .map((t) => (NEAR_24H && !t.departDate ? { ...t, daysAhead: [0, 1] as [number, number], description: `${t.description} · bay trong 24h (--24h)` } : t));
 
 /**
  * Cờ --airline (env META_AIRLINES, VD "VN" hoặc "VN,VJ") hoặc `filters.airlines` trong JSON: chỉ so
@@ -325,9 +380,14 @@ function candidateRoutes(tpl: ConditionTemplate): [string, string][] {
     routes.set(`${a}-${b}`, [a, b]);
     routes.set(`${b}-${a}`, [b, a]);
   };
-  if (tpl.routes?.length) {
-    // Case có nhóm chặng riêng (VD trục chính, đường dài…).
-    for (const [a, b] of tpl.routes) add(a.toUpperCase(), b.toUpperCase());
+  const vnEnd = tpl.vnEnd ?? AIRPORTS.vnInternationalGateways;
+  if (tpl.routes?.length || tpl.region?.length) {
+    // Case có nhóm chặng riêng (VD trục chính, đường dài…) và/hoặc vùng trong danh mục sân bay.
+    for (const [a, b] of tpl.routes ?? []) add(a.toUpperCase(), b.toUpperCase());
+    if (tpl.region?.length) for (const vn of vnEnd) for (const intl of airportsInRegions(tpl.region)) add(vn, intl);
+  } else if (tpl.routeType === "international" && tpl.pool === "all" && AIRPORT_CATALOG.size) {
+    // Khám phá: mọi sân bay thế giới trong danh mục.
+    for (const vn of vnEnd) for (const intl of allInternational()) add(vn, intl);
   } else if (tpl.routeType === "domestic") {
     // Nội địa: luôn có 1 đầu là sân bay trục.
     for (const hub of AIRPORTS.domesticHubs) for (const other of AIRPORTS.domestic) add(hub, other);
@@ -381,10 +441,11 @@ function buildConditions(history: Set<string>, usedTemplates: Set<string>): Cond
           ? tpl.returnDate ?? toYmd(daysFromNowToDate(dayOffset + randInt(stayMin, stayMax)))
           : undefined;
 
-      const isDomestic = AIRPORTS.domestic.includes(from) && AIRPORTS.domestic.includes(to);
+      const isDomestic = isDomesticCode(from) && isDomesticCode(to);
       conditions.push({
         id: `cond-${conditions.length + 1}`,
-        description: tpl.id ? `${tpl.id} · ${tpl.description}` : tpl.description,
+        // Kèm tên thành phố/quốc gia 2 đầu (từ danh mục sân bay) cho dễ đọc báo cáo.
+        description: `${tpl.id ? `${tpl.id} · ${tpl.description}` : tpl.description} — ${airportLabel(from)} → ${airportLabel(to)}`,
         templateKey: templateKey(tpl),
         from,
         to,
@@ -474,6 +535,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         new Set(history.map((h) => h.template).filter((t): t is string => !!t))
       );
       console.log(`[metasearch-v2] DRY RUN — ${planned.length} điều kiện (${TEMPLATES.length} case khớp bộ lọc, lịch sử ${history.length}):`);
+      console.log(`  ${AIRPORT_STATUS}`);
       for (const c of planned) {
         console.log(
           `  ${c.id.padEnd(7)} ${c.from}${c.itinerary ? "⇄" : "→"}${c.to} ${c.flightType === "DOMESTIC" ? "NĐ" : "QT"} ` +
@@ -493,7 +555,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
       "id", "description", "route", "flightType", "tripType", "departDate", "returnDate", "pax",
       "webStatus", "metaStatus", "webMs", "metaMs", "webRawItems", "metaRawItems",
       "metaOffers", "matched", "priceDiffs", "smallPriceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
-      "metaDeeplinkRoute", "verdict", "webUrl",
+      "searchedAt", "within24h", "within24hProblems", "metaDeeplinkRoute", "verdict", "webUrl",
     ]);
     const detailsCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "details.csv"), [...DETAIL_COLUMNS]);
 
@@ -537,6 +599,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         (AIRLINE_FILTER.length ? ` · chỉ hãng ${AIRLINE_FILTER.join(", ")}` : "") +
         `, báo cáo: ${runDir}`
     );
+    console.log(`[metasearch-v2] ${AIRPORT_STATUS}`);
     const reports: ConditionReport[] = [];
 
     for (const c of conditions) {
@@ -565,6 +628,8 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
               return tool.searchAndCapture(metaBody, d.metaTimeoutMs);
             }
           : () => meta.search(metaBody, d.metaTimeoutMs);
+        // Mốc tính "cất cánh trong 24h": lúc gửi search 2 bên.
+        const searchedAt = new Date();
         const [webRes, metaRes] = await Promise.all([
           searchWeb(),
           searchMeta().catch((err: Error) => ({ status: 0, ms: 0, data: { message: err.message } as MetasearchResponse })),
@@ -591,6 +656,8 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           );
         }
         const result = compareMetaAgainstWeb(metaItems, webItems, c.itinerary ? 2 : 1);
+        markNearDeparture(result, searchedAt);
+        const near = nearDepartureText(result.nearDeparture);
 
         const reloadNote = webRes.reloads ? `, tải lại trang ${webRes.reloads} lần` : "";
         const webStatus = webRes.timedOut
@@ -638,6 +705,9 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           withVoucher: result.withVoucher,
           metaOnly: result.metaOnly,
           webOnly: result.webOnly,
+          searchedAt: searchedAt.toLocaleString("vi-VN"),
+          within24h: result.nearDeparture?.total ?? 0,
+          within24hProblems: result.nearDeparture?.problems ?? 0,
           metaDeeplinkRoute: deeplink,
           verdict,
           webUrl,
@@ -657,14 +727,14 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
             request: metaBody,
             status: metaRes.status,
             data: metaRes.data,
-            airports: [c.from, c.to].map((code) => ({ code, isDomestic: AIRPORTS.domestic.includes(code) })),
+            airports: [c.from, c.to].map((code) => ({ code, isDomestic: isDomesticCode(code) })),
             label: `${c.id} · ${route} · ${dates} · ${pax}`,
             savedAt: new Date().toLocaleString("vi-VN"),
           });
         }
         reports.push({
           id: c.id, description, route, dates, pax, webStatus, metaStatus, deeplink, webUrl,
-          metaSnapshotHref, metaToolHref, verdict, result,
+          metaSnapshotHref, metaToolHref, verdict, result, searchedAt: searchedAt.toLocaleString("vi-VN"),
         });
         // Chỉ ghi lịch sử khi so được cả 2 bên — điều kiện lỗi/timeout để lần sau chạy lại.
         if (!webRes.timedOut && metaOk) {
@@ -683,6 +753,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
             `lệch giá=${result.priceDiffs} lệch<1k=${result.smallPriceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);
+        if (near) console.log(`    ⏱ cất cánh trong 24h kể từ lúc search: ${near}`);
         result.warnings.forEach((w) => console.log(`    ⚠ ${w}`));
 
         // Chỉ fail khi 1 bên không trả được dữ liệu (lỗi/timeout); chênh lệch số liệu là KẾT QUẢ, ghi vào báo cáo.

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CompareResult, DetailRow, FareItem, FareLeg } from "./metasearchCompareV2";
+import { CompareResult, DetailRow, FareItem, FareLeg, NEAR_DEPARTURE_HOURS } from "./metasearchCompareV2";
 import { DetailViewLabels, detailView, detailViewCss, detailViewScript } from "./metasearchDetailView";
 
 /**
@@ -57,6 +57,8 @@ export type ConditionReport = {
   /** Đường dẫn tương đối tới bản sao trang metaSearch hiển thị kết quả đã lưu (rỗng nếu không tạo được). */
   metaToolHref: string;
   verdict: string;
+  /** Lúc gửi search (giờ VN) — mốc tính "cất cánh trong 24h". */
+  searchedAt?: string;
   result: CompareResult;
 };
 
@@ -68,7 +70,7 @@ export const DETAIL_COLUMNS = [
   "webClosestPrice", "webPrices", "webOutPrices", "webInPrices",
   "diff", "diffLegs",
   "metaServiceFee", "webServiceFee", "metaFinal", "webFinal",
-  "webSource", "metaDuplicates", "note",
+  "webSource", "metaDuplicates", "note", "hoursToDepart", "within24h",
 ] as const;
 
 export function detailToCsvRow(id: string, route: string, r: DetailRow): Record<string, unknown> {
@@ -86,6 +88,8 @@ export function detailToCsvRow(id: string, route: string, r: DetailRow): Record<
     diff: r.diff ?? "", diffLegs: r.diffLegs,
     metaServiceFee: r.metaServiceFee ?? "", webServiceFee: r.webServiceFee ?? "", metaFinal: r.metaFinal ?? "", webFinal: r.webFinal ?? "",
     webSource: r.webSource, metaDuplicates: r.metaDuplicates || "", note: r.note,
+    hoursToDepart: r.hoursToDepart ?? "",
+    within24h: r.hoursToDepart == null ? "" : r.hoursToDepart < 0 ? "đã qua giờ bay" : r.hoursToDepart < NEAR_DEPARTURE_HOURS ? "trong 24h" : "",
   };
 }
 
@@ -99,6 +103,13 @@ const webBreakdown = (w: CompareResult["webResults"]) =>
   [`${w.combos} hành trình`, w.outLegs && `${w.outLegs} chặng đi`, w.inLegs && `${w.inLegs} chặng về`].filter(Boolean).join(" · ");
 
 /** Màu kết luận: KHỚP xanh; KHỚP kèm "lệch giá dưới 1k" vàng (do làm tròn); còn lại đỏ. */
+/** "12 chuyến (3 lệch/thiếu, 1 đã qua giờ bay)" — hành trình cất cánh trong 24h kể từ lúc search. */
+export function nearDepartureText(n: CompareResult["nearDeparture"]): string {
+  if (!n?.total) return "";
+  const extra = [n.problems && `${n.problems} lệch/thiếu`, n.departed && `${n.departed} đã qua giờ bay`].filter(Boolean).join(", ");
+  return `${n.total} chuyến${extra ? ` (${extra})` : ""}`;
+}
+
 const verdictClass = (verdict: string) => (verdict.startsWith("KHỚP") ? (verdict.includes("dưới 1k") ? "warn" : "ok") : "diff");
 
 export function writeHtmlReport(filePath: string, conditions: ConditionReport[], startedAt: Date) {
@@ -120,6 +131,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
         <td class="num">${r.withVoucher}</td>
         <td class="num ${r.metaOnly ? "bad" : ""}">${r.metaOnly}</td>
         <td class="num ${r.webOnly ? "bad" : ""}">${r.webOnly}</td>
+        <td class="num ${r.nearDeparture?.problems ? "bad" : ""}">${r.nearDeparture?.total || ""}${r.nearDeparture?.problems ? `<div class="muted">${r.nearDeparture.problems} lệch/thiếu</div>` : ""}</td>
         <td><span class="tag ${verdictClass(c.verdict)}" style="white-space: normal">${esc(c.verdict)}</span></td>
       </tr>`;
     })
@@ -136,6 +148,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
           <li>Web: ${esc(c.webStatus)}</li>
           <li>Meta: ${esc(c.metaStatus)}</li>
           <li>Deeplink meta: ${esc(c.deeplink)}</li>
+          ${c.result.nearDeparture?.total ? `<li class="near-li">Cất cánh trong 24h kể từ lúc search${c.searchedAt ? ` (${esc(c.searchedAt)})` : ""}: ${esc(nearDepartureText(c.result.nearDeparture))} — nhãn tím <b>≤24h</b> trong bảng, lọc bằng ô "Chỉ chuyến bay trong 24h"</li>` : ""}
           ${c.result.warnings.map((w) => `<li class="warn">⚠ ${esc(w)}</li>`).join("")}
         </ul>
         <h3>Chi tiết từng hành trình (${c.result.rows.length})</h3>
@@ -165,7 +178,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   .tag.meta { background: #fef3c7; color: #92400e; } .tag.web { background: #dbeafe; color: #1e40af; }
   .tag.warn { background: #fef9c3; color: #854d0e; } .warn-t { color: #a16207; font-weight: 700; }
   .meta-list { margin: 8px 0; padding-left: 18px; font-size: 13px; }
-  .meta-list .warn { color: #92400e; }
+  .meta-list .warn { color: #92400e; } .meta-list .near-li { color: #5b21b6; }
   details { margin-top: 12px; } summary { cursor: pointer; color: #2563eb; }
   ${detailViewCss}
 </style></head><body>
@@ -181,7 +194,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   <section>
     <h2>Tổng quan</h2>
     <div class="scroll"><table>
-      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th>Kết luận</th></tr></thead>
+      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th title="Hành trình cất cánh trong 24h kể từ lúc search">Bay trong 24h</th><th>Kết luận</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table></div>
   </section>

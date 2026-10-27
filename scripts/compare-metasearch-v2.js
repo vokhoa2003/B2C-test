@@ -3,8 +3,8 @@
  * Chạy tool so sánh metasearch vs web với cờ dòng lệnh (chạy được cả PowerShell lẫn bash):
  *
  *   yarn compare:metasearch:v2 [--trip oneway|roundtrip|all] [--route domestic|international|all]
- *                           [--count N] [--repeat] [--review] [--headed] [--ui]
- *   yarn compare:metasearch:v2 --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD] [--return YYYY-MM-DD]
+ *                           [--count N] [--24h] [--repeat] [--review] [--headed] [--ui]
+ *   yarn compare:metasearch:v2 --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD|today|tomorrow|+N] [--return …]
  *                           (chỉ định đúng 1 hành trình)
  *   ... [--adt N] [--chd N] [--inf N] [--airline VNA|VN,VJ]   (số khách / hãng — dùng kèm mọi chế độ)
  *   yarn compare:metasearch:v2:clear   (= --clear-history: xoá lịch sử điều kiện đã chạy)
@@ -25,12 +25,21 @@ const { spawnSync } = require("child_process");
 // Trùng đường dẫn với HISTORY_FILE trong tests/helpers/metasearchHistoryV2.ts.
 const HISTORY_FILE = path.join(__dirname, "..", ".test-state", "metasearch-compare-v2", "history.json");
 const USAGE = [
-  "Dùng: --trip oneway|roundtrip|all  --route domestic|international|all  --count N  --case PAX-09,ROUTE  --dry-run  --repeat  --review  --clear-history  --headed  --ui",
-  "Chỉ định hành trình: --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD] [--return YYYY-MM-DD]",
+  "Dùng: --trip oneway|roundtrip|all  --route domestic|international|all  --count N  --case PAX-09,ROUTE  --24h  --dry-run  --repeat  --review  --clear-history  --headed  --ui",
+  "Chỉ định hành trình: --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD|today|tomorrow|+N] [--return …]",
   "Số khách / hãng (dùng kèm mọi chế độ): --adt N --chd N --inf N (em bé ≤ người lớn, tổng ≤ 9)  --airline VNA (hoặc VN,VJ)",
 ].join("\n");
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** "today" / "tomorrow" / "+N" → YYYY-MM-DD theo giờ máy; giá trị khác giữ nguyên để kiểm tra DATE. */
+function relativeDate(value) {
+  const v = value.toLowerCase();
+  const offset = v === "today" ? 0 : v === "tomorrow" ? 1 : /^\+\d+$/.test(v) ? Number(v.slice(1)) : null;
+  if (offset === null) return value;
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 const FLAGS = {
   trip: { env: "META_TRIP_TYPE", values: ["oneway", "roundtrip", "all"] },
   route: { env: "META_ROUTE_TYPE", values: ["domestic", "international", "all"] },
@@ -40,8 +49,9 @@ const FLAGS = {
   // Chỉ định 1 hành trình cụ thể (bỏ qua templates/lịch sử, chạy đúng 1 điều kiện).
   from: { env: "META_FROM", upper: true, check: (v) => /^[A-Z]{3}$/.test(v), hint: "mã sân bay 3 chữ, VD SGN" },
   to: { env: "META_TO", upper: true, check: (v) => /^[A-Z]{3}$/.test(v), hint: "mã sân bay 3 chữ, VD HAN" },
-  depart: { env: "META_DEPART", check: (v) => DATE.test(v), hint: "dạng YYYY-MM-DD" },
-  return: { env: "META_RETURN", check: (v) => DATE.test(v), hint: "dạng YYYY-MM-DD" },
+  // Ngày: YYYY-MM-DD, hoặc today / tomorrow / +N (N ngày nữa) — VD case 24h: --depart today
+  depart: { env: "META_DEPART", map: relativeDate, check: (v) => DATE.test(v), hint: "dạng YYYY-MM-DD, today, tomorrow hoặc +N" },
+  return: { env: "META_RETURN", map: relativeDate, check: (v) => DATE.test(v), hint: "dạng YYYY-MM-DD, today, tomorrow hoặc +N" },
   // Số khách — dùng được cả khi chạy ngẫu nhiên (ghi đè số khách của mọi template).
   adt: { env: "META_ADT", check: (v) => /^\d$/.test(v) && Number(v) >= 1, hint: "số người lớn 1–9" },
   chd: { env: "META_CHD", check: (v) => /^\d$/.test(v), hint: "số trẻ em 0–8" },
@@ -88,6 +98,11 @@ for (let i = 0; i < args.length; i++) {
     env.META_REVIEW = "1";
     continue;
   }
+  // Case 24h ngẫu nhiên: mọi case (khách, chặng, hành trình ngẫu nhiên như thường) bay hôm nay / ngày mai.
+  if (arg === "--24h") {
+    env.META_NEAR_24H = "1";
+    continue;
+  }
   if (arg === "--dry-run") {
     env.META_DRY_RUN = "1";
     continue;
@@ -120,6 +135,14 @@ if (route.length) {
   if (env.META_FROM === env.META_TO) fail("--from và --to phải khác nhau.");
   if (env.META_TRIP_TYPE === "oneway" && env.META_RETURN) fail("--trip oneway thì không dùng --return.");
   if (env.META_DEPART && env.META_RETURN && env.META_RETURN < env.META_DEPART) fail("--return phải sau hoặc bằng --depart.");
+  // Mã sân bay không có trong danh mục (public/PLAN/airports.json) → chỉ cảnh báo, vẫn chạy.
+  const catalogFile = path.resolve(process.env.META_AIRPORTS_FILE || path.join(__dirname, "..", "public", "PLAN", "airports.json"));
+  if (fs.existsSync(catalogFile)) {
+    const codes = new Set(JSON.parse(fs.readFileSync(catalogFile, "utf-8")).map((a) => String(a.code).toUpperCase()));
+    for (const code of [env.META_FROM, env.META_TO]) {
+      if (!codes.has(code)) console.warn(`⚠ ${code} không có trong danh mục sân bay ${path.relative(process.cwd(), catalogFile)} — vẫn chạy thử.`);
+    }
+  }
 }
 // Số khách: cùng quy tắc ô chọn khách khi đặt vé trên web (InputInfant.tsx): em bé ≤ người lớn,
 // tổng người lớn + trẻ em + em bé ≤ 9. Thiếu cờ nào thì lấy mặc định 1 NL / 0 TE / 0 EB.
