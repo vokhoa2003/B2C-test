@@ -419,7 +419,7 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
     const summaryCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "summary.csv"), [
       "id", "description", "route", "flightType", "tripType", "departDate", "returnDate", "pax",
       "webStatus", "metaStatus", "webMs", "metaMs", "webRawItems", "metaRawItems",
-      "metaOffers", "matched", "priceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
+      "metaOffers", "matched", "priceDiffs", "smallPriceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
       "metaDeeplinkRoute", "verdict", "webUrl",
     ]);
     const detailsCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "details.csv"), [...DETAIL_COLUMNS]);
@@ -530,9 +530,11 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
         const verdict = webRes.timedOut || !metaOk
           ? `KHÔNG SO ĐƯỢC (${[webRes.timedOut && `web ${webRes.error}`, !metaOk && "meta lỗi"].filter(Boolean).join(", ")})`
           : result.priceDiffs + result.feeDiffs + result.metaOnly + result.webOnly === 0
-            ? "KHỚP"
+            // Chênh < 1k là do làm tròn → vẫn KHỚP, kèm cảnh báo.
+            ? "KHỚP" + (result.smallPriceDiffs ? ` · lệch giá dưới 1k: ${result.smallPriceDiffs}` : "")
             : [
                 result.priceDiffs && `lệch giá ${result.priceDiffs}`,
+                result.smallPriceDiffs && `lệch giá dưới 1k ${result.smallPriceDiffs}`,
                 result.feeDiffs && `lệch phí ${result.feeDiffs}`,
                 result.metaOnly && `chỉ meta có ${result.metaOnly}`,
                 result.webOnly && `chỉ web có ${result.webOnly}`,
@@ -557,6 +559,7 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
           metaOffers: result.metaOffers,
           matched: result.matched,
           priceDiffs: result.priceDiffs,
+          smallPriceDiffs: result.smallPriceDiffs,
           feeDiffs: result.feeDiffs,
           withVoucher: result.withVoucher,
           metaOnly: result.metaOnly,
@@ -602,7 +605,7 @@ test.describe("So sánh kết quả search: metasearch đối tác vs trang web 
 
         console.log(
           `[metasearch-compare] ${c.id} ${route} ${dates} ${pax} | meta=${result.metaOffers} web=${result.webResults.items} khớp=${result.matched} ` +
-            `lệch giá=${result.priceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
+            `lệch giá=${result.priceDiffs} lệch<1k=${result.smallPriceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);
         result.warnings.forEach((w) => console.log(`    ⚠ ${w}`));

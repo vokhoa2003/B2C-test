@@ -80,7 +80,13 @@ export type LegInfo = {
   prices: number[];
 };
 
-export type DetailStatus = "KHỚP" | "LỆCH GIÁ" | "LỆCH PHÍ" | "CHỈ CÓ Ở META" | "CHỈ CÓ Ở WEB";
+export type DetailStatus = "KHỚP" | "LỆCH GIÁ" | "Lệch giá dưới 1k" | "LỆCH PHÍ" | "CHỈ CÓ Ở META" | "CHỈ CÓ Ở WEB";
+
+/**
+ * Chênh giá nhỏ hơn mức này (VND) coi là do LÀM TRÒN (meta có giá lẻ thập phân sau khi phân bổ voucher)
+ * → trạng thái cảnh báo "Lệch giá dưới 1k", không tính là lệch giá.
+ */
+export const SMALL_PRICE_DIFF = 1000;
 
 export type DetailRow = {
   status: DetailStatus;
@@ -127,6 +133,8 @@ export type CompareResult = {
   webResults: { items: number; combos: number; outLegs: number; inLegs: number };
   matched: number;
   priceDiffs: number;
+  /** Lệch giá |chênh| < SMALL_PRICE_DIFF — cảnh báo, không tính vào priceDiffs. */
+  smallPriceDiffs: number;
   feeDiffs: number;
   metaOnly: number;
   webOnly: number;
@@ -428,6 +436,7 @@ export function compareMetaAgainstWeb(metaItems: FareItem[], webItems: FareItem[
         diffLegs: "", webServiceFee: null, webFinal: null, webSource: "", note: [missing, voucherNote].filter(Boolean).join(" · "),
       };
     }
+    if (row.status === "LỆCH GIÁ" && row.diff !== null && Math.abs(row.diff) < SMALL_PRICE_DIFF) row.status = "Lệch giá dưới 1k";
     rowsByKey.set(dedupeKey, row);
   }
 
@@ -469,6 +478,7 @@ export function compareMetaAgainstWeb(metaItems: FareItem[], webItems: FareItem[
     },
     matched: count("KHỚP"),
     priceDiffs: count("LỆCH GIÁ"),
+    smallPriceDiffs: count("Lệch giá dưới 1k"),
     feeDiffs: count("LỆCH PHÍ"),
     metaOnly: count("CHỈ CÓ Ở META"),
     webOnly: webOnlyRows.length,

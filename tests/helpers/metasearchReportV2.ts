@@ -98,6 +98,9 @@ const DETAIL_LABELS: DetailViewLabels = { metaPrice: "Giá vé META (+ voucher)"
 const webBreakdown = (w: CompareResult["webResults"]) =>
   [`${w.combos} hành trình`, w.outLegs && `${w.outLegs} chặng đi`, w.inLegs && `${w.inLegs} chặng về`].filter(Boolean).join(" · ");
 
+/** Màu kết luận: KHỚP xanh; KHỚP kèm "lệch giá dưới 1k" vàng (do làm tròn); còn lại đỏ. */
+const verdictClass = (verdict: string) => (verdict.startsWith("KHỚP") ? (verdict.includes("dưới 1k") ? "warn" : "ok") : "diff");
+
 export function writeHtmlReport(filePath: string, conditions: ConditionReport[], startedAt: Date) {
   const summaryRows = conditions
     .map((c) => {
@@ -112,11 +115,12 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
         <td class="num">${r.webResults.items}<div class="muted">${esc(webBreakdown(r.webResults))}</div></td>
         <td class="num">${r.matched}</td>
         <td class="num ${r.priceDiffs ? "bad" : ""}">${r.priceDiffs}</td>
+        <td class="num ${r.smallPriceDiffs ? "warn-t" : ""}">${r.smallPriceDiffs}</td>
         <td class="num ${r.feeDiffs ? "bad" : ""}">${r.feeDiffs}</td>
         <td class="num">${r.withVoucher}</td>
         <td class="num ${r.metaOnly ? "bad" : ""}">${r.metaOnly}</td>
         <td class="num ${r.webOnly ? "bad" : ""}">${r.webOnly}</td>
-        <td><span class="tag ${c.verdict === "KHỚP" ? "ok" : "diff"}">${esc(c.verdict)}</span></td>
+        <td><span class="tag ${verdictClass(c.verdict)}" style="white-space: normal">${esc(c.verdict)}</span></td>
       </tr>`;
     })
     .join("");
@@ -159,6 +163,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .tag.ok { background: #dcfce7; color: #166534; } .tag.diff { background: #fee2e2; color: #991b1b; }
   .tag.meta { background: #fef3c7; color: #92400e; } .tag.web { background: #dbeafe; color: #1e40af; }
+  .tag.warn { background: #fef9c3; color: #854d0e; } .warn-t { color: #a16207; font-weight: 700; }
   .meta-list { margin: 8px 0; padding-left: 18px; font-size: 13px; }
   .meta-list .warn { color: #92400e; }
   details { margin-top: 12px; } summary { cursor: pointer; color: #2563eb; }
@@ -176,7 +181,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   <section>
     <h2>Tổng quan</h2>
     <div class="scroll"><table>
-      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th>Kết luận</th></tr></thead>
+      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th>Kết luận</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table></div>
   </section>

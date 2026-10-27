@@ -52,12 +52,20 @@ import {
 type RouteType = "domestic" | "international";
 
 type ConditionTemplate = {
+  /** Mã case study (VD "PAX-09", "ROUTE-07") — hiện trong báo cáo, dùng xoay vòng case chưa chạy. */
+  id?: string;
   description: string;
   routeType: RouteType;
   tripType: "oneway" | "roundtrip";
   adults: number;
   children: number;
   infants: number;
+  /** Nhóm chặng của case: chọn ngẫu nhiên 1 cặp (cả 2 chiều). Bỏ trống = theo `airports` như cũ. */
+  routes?: [string, string][];
+  /** Ngày bay = hôm nay + [min, max] ngày. Bỏ trống = theo defaults (nội địa 20+, quốc tế 40+). */
+  daysAhead?: [number, number];
+  /** Khứ hồi: ngày về = ngày đi + [min, max] ngày (0 = về trong ngày). Bỏ trống = theo defaults. */
+  stayDays?: [number, number];
   /** Cố định route/ngày nếu muốn tái hiện 1 case cụ thể (bỏ trống = ngẫu nhiên). */
   from?: string;
   to?: string;
@@ -198,12 +206,39 @@ function customTemplate(): ConditionTemplate | null {
     returnDate: tripType === "roundtrip" ? process.env.META_RETURN || undefined : undefined,
   };
 }
+/**
+ * Kiểm tra số khách của mọi template — cùng quy tắc ô chọn khách trên web (InputInfant.tsx):
+ * người lớn ≥ 1, em bé ≤ người lớn, tổng người lớn + trẻ em + em bé ≤ 9. Sai thì dừng ngay, báo rõ case nào.
+ */
+const MAX_PAX = 9;
+const invalidTemplates = DATA.templates
+  .map((t) => {
+    const total = t.adults + t.children + t.infants;
+    const errors = [
+      t.adults < 1 && "cần ít nhất 1 người lớn",
+      t.infants > t.adults && `em bé (${t.infants}) > người lớn (${t.adults})`,
+      total > MAX_PAX && `tổng ${total} khách > ${MAX_PAX}`,
+      [t.adults, t.children, t.infants].some((n) => !Number.isInteger(n) || n < 0) && "số khách phải là số nguyên ≥ 0",
+      t.tripType === "oneway" && (t.returnDate || t.stayDays) && "1 chiều không dùng returnDate/stayDays",
+    ].filter(Boolean);
+    return errors.length ? `${t.id ?? t.description}: ${errors.join(", ")}` : null;
+  })
+  .filter(Boolean);
+if (invalidTemplates.length) {
+  throw new Error(`metasearch-vs-web-v2.json có template không hợp lệ:\n- ${invalidTemplates.join("\n- ")}`);
+}
+/** Khoá xoay vòng: case đã chạy (lưu trong lịch sử) thì xếp sau case chưa chạy. */
+const templateKey = (t: ConditionTemplate) => t.id ?? t.description;
+
 const CUSTOM_TEMPLATE = customTemplate();
 const CONDITIONS_PER_RUN = CUSTOM_TEMPLATE ? 1 : Number(process.env.META_CONDITIONS) || DATA.conditionsPerRun;
+// Cờ --case PAX-09,ROUTE-07 (env META_CASES): chỉ chạy các case study này (khớp mã hoặc tiền tố, VD "PAX").
+const CASE_FILTER = (process.env.META_CASES || "").split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
 const TEMPLATES = CUSTOM_TEMPLATE
   ? [CUSTOM_TEMPLATE]
   : DATA.templates
       .filter((t) => (TRIP_FILTER === "all" || t.tripType === TRIP_FILTER) && (ROUTE_FILTER === "all" || t.routeType === ROUTE_FILTER))
+      .filter((t) => !CASE_FILTER.length || CASE_FILTER.some((c) => (t.id ?? "").toUpperCase() === c || (t.id ?? "").toUpperCase().startsWith(c + "-")))
       .map((t) =>
         PAX_OVERRIDE
           ? { ...t, ...PAX_OVERRIDE, description: `${t.description.split(",").slice(0, 2).join(",")}, ${paxText(PAX_OVERRIDE)} (theo cờ)` }
@@ -247,6 +282,8 @@ type Condition = {
   infants: number;
   /** Route + loại hành trình này đã chạy ở lần trước (chỉ xảy ra khi đã hết tổ hợp mới). */
   repeated?: boolean;
+  /** Mã case (template) sinh ra điều kiện này — ghi lịch sử để xoay vòng. */
+  templateKey?: string;
 };
 
 const pick = <T>(list: T[]): T => list[Math.floor(Math.random() * list.length)];
@@ -260,11 +297,17 @@ function toYmd(date: Date): string {
 
 /**
  * Thứ tự template cho lần chạy này: xáo riêng nhóm nội địa và quốc tế rồi xen kẽ
- * (bắt đầu ngẫu nhiên) — lần nào cũng có cả 2 loại, và đổi loại khách/1 chiều-khứ hồi giữa các lần.
+ * (bắt đầu ngẫu nhiên) — lần nào cũng có cả 2 loại; case chưa chạy được ưu tiên để qua nhiều
+ * lần chạy là phủ hết bộ case study.
  */
-function templateOrder(): ConditionTemplate[] {
-  const domestic = shuffle(TEMPLATES.filter((t) => t.routeType === "domestic"));
-  const international = shuffle(TEMPLATES.filter((t) => t.routeType === "international"));
+function templateOrder(usedTemplates: Set<string>): ConditionTemplate[] {
+  // Trong mỗi nhóm: case CHƯA chạy lần nào lên trước (xáo ngẫu nhiên), rồi tới case đã chạy.
+  const rotate = (list: ConditionTemplate[]) => [
+    ...shuffle(list.filter((t) => !usedTemplates.has(templateKey(t)))),
+    ...shuffle(list.filter((t) => usedTemplates.has(templateKey(t)))),
+  ];
+  const domestic = rotate(TEMPLATES.filter((t) => t.routeType === "domestic"));
+  const international = rotate(TEMPLATES.filter((t) => t.routeType === "international"));
   const [first, second] = Math.random() < 0.5 ? [domestic, international] : [international, domestic];
   const order: ConditionTemplate[] = [];
   for (let i = 0; i < Math.max(first.length, second.length); i++) {
@@ -275,14 +318,17 @@ function templateOrder(): ConditionTemplate[] {
 }
 
 /** Mọi route hợp lệ cho 1 loại chặng (có chiều), theo danh sách sân bay trong cấu hình. */
-function candidateRoutes(routeType: RouteType): [string, string][] {
+function candidateRoutes(tpl: ConditionTemplate): [string, string][] {
   const routes = new Map<string, [string, string]>();
   const add = (a: string, b: string) => {
     if (a === b) return;
     routes.set(`${a}-${b}`, [a, b]);
     routes.set(`${b}-${a}`, [b, a]);
   };
-  if (routeType === "domestic") {
+  if (tpl.routes?.length) {
+    // Case có nhóm chặng riêng (VD trục chính, đường dài…).
+    for (const [a, b] of tpl.routes) add(a.toUpperCase(), b.toUpperCase());
+  } else if (tpl.routeType === "domestic") {
     // Nội địa: luôn có 1 đầu là sân bay trục.
     for (const hub of AIRPORTS.domesticHubs) for (const other of AIRPORTS.domestic) add(hub, other);
   } else {
@@ -299,15 +345,15 @@ function candidateRoutes(routeType: RouteType): [string, string][] {
  *   thì mới cho lặp lại (đánh dấu `repeated`) để vẫn đủ số điều kiện.
  * - Template cố định from/to không bị lịch sử chặn (dùng để tái hiện case).
  */
-function buildConditions(history: Set<string>): Condition[] {
+function buildConditions(history: Set<string>, usedTemplates: Set<string>): Condition[] {
   const d = DATA.defaults;
-  const order = templateOrder();
+  const order = templateOrder(usedTemplates);
   const conditions: Condition[] = [];
   const usedInRun = new Set<string>();
 
   const pickRoute = (tpl: ConditionTemplate, allowRepeat: boolean): [string, string] | null => {
     if (tpl.from && tpl.to) return [tpl.from, tpl.to];
-    const fresh = candidateRoutes(tpl.routeType).filter(
+    const fresh = candidateRoutes(tpl).filter(
       ([from, to]) =>
         !usedInRun.has([from, to].sort().join("-")) && (allowRepeat || !history.has(historyKey(from, to, tpl.tripType)))
     );
@@ -326,17 +372,20 @@ function buildConditions(history: Set<string>): Condition[] {
       usedInRun.add(routeKey);
 
       const minDays = tpl.routeType === "domestic" ? d.domesticMinDays : d.internationalMinDays;
-      const dayOffset = minDays + randInt(0, d.randomExtraDays);
+      const [aheadMin, aheadMax] = tpl.daysAhead ?? [minDays, minDays + d.randomExtraDays];
+      const dayOffset = randInt(aheadMin, aheadMax);
+      const [stayMin, stayMax] = tpl.stayDays ?? [d.returnAfterDaysMin, d.returnAfterDaysMax];
       const departDate = tpl.departDate ?? toYmd(daysFromNowToDate(dayOffset));
       const returnDate =
         tpl.tripType === "roundtrip"
-          ? tpl.returnDate ?? toYmd(daysFromNowToDate(dayOffset + randInt(d.returnAfterDaysMin, d.returnAfterDaysMax)))
+          ? tpl.returnDate ?? toYmd(daysFromNowToDate(dayOffset + randInt(stayMin, stayMax)))
           : undefined;
 
       const isDomestic = AIRPORTS.domestic.includes(from) && AIRPORTS.domestic.includes(to);
       conditions.push({
         id: `cond-${conditions.length + 1}`,
-        description: tpl.description,
+        description: tpl.id ? `${tpl.id} · ${tpl.description}` : tpl.description,
+        templateKey: templateKey(tpl),
         from,
         to,
         flightType: isDomestic ? "DOMESTIC" : "INTERNATIONAL",
@@ -417,6 +466,24 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
     const d = DATA.defaults;
     test.setTimeout(CONDITIONS_PER_RUN * (Math.max(d.webTimeoutMs, d.metaTimeoutMs) + 2 * 60_000));
 
+    // --dry-run (env META_DRY_RUN=1): chỉ in các điều kiện sẽ chạy — không đăng nhập, không search, không ghi lịch sử.
+    if (process.env.META_DRY_RUN === "1") {
+      const history = process.env.META_IGNORE_HISTORY === "1" ? [] : loadHistory();
+      const planned = buildConditions(
+        new Set(history.map((h) => h.key)),
+        new Set(history.map((h) => h.template).filter((t): t is string => !!t))
+      );
+      console.log(`[metasearch-v2] DRY RUN — ${planned.length} điều kiện (${TEMPLATES.length} case khớp bộ lọc, lịch sử ${history.length}):`);
+      for (const c of planned) {
+        console.log(
+          `  ${c.id.padEnd(7)} ${c.from}${c.itinerary ? "⇄" : "→"}${c.to} ${c.flightType === "DOMESTIC" ? "NĐ" : "QT"} ` +
+            `${c.departDate}${c.returnDate ? " / " + c.returnDate : ""}  ${c.adults}NL ${c.children}TE ${c.infants}EB` +
+            `${c.repeated ? " (lặp)" : ""}  — ${c.description}`
+        );
+      }
+      return;
+    }
+
     // Token đặt sẵn được ưu tiên; không có thì đăng nhập như web (lỗi đăng nhập → dừng luôn, báo rõ lý do) — làm
     // TRƯỚC khi tạo thư mục báo cáo để lỗi đăng nhập không để lại báo cáo rỗng.
     const webToken = WEB_API_TOKEN || (WEB_API_CREDENTIALS ? await loginWebApi(request, WEB_API_URL, WEB_API_CREDENTIALS) : "");
@@ -425,7 +492,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
     const summaryCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "summary.csv"), [
       "id", "description", "route", "flightType", "tripType", "departDate", "returnDate", "pax",
       "webStatus", "metaStatus", "webMs", "metaMs", "webRawItems", "metaRawItems",
-      "metaOffers", "matched", "priceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
+      "metaOffers", "matched", "priceDiffs", "smallPriceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
       "metaDeeplinkRoute", "verdict", "webUrl",
     ]);
     const detailsCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "details.csv"), [...DETAIL_COLUMNS]);
@@ -455,7 +522,8 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
     const ignoreHistory = process.env.META_IGNORE_HISTORY === "1";
     const history = loadHistory();
     const historyKeys = new Set(ignoreHistory ? [] : history.map((h) => h.key));
-    const conditions = buildConditions(historyKeys);
+    const usedTemplates = new Set(history.map((h) => h.template).filter((t): t is string => !!t));
+    const conditions = buildConditions(historyKeys, usedTemplates);
     const repeated = conditions.filter((c) => c.repeated).length;
     console.log(
       `[metasearch-v2] Lịch sử: ${history.length} điều kiện đã chạy (${HISTORY_FILE})` +
@@ -536,9 +604,11 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         const verdict = webRes.timedOut || !metaOk
           ? `KHÔNG SO ĐƯỢC (${[webRes.timedOut && `web ${webRes.error}`, !metaOk && "meta lỗi"].filter(Boolean).join(", ")})`
           : result.priceDiffs + result.feeDiffs + result.metaOnly + result.webOnly === 0
-            ? "KHỚP"
+            // Chênh < 1k là do làm tròn → vẫn KHỚP, kèm cảnh báo.
+            ? "KHỚP" + (result.smallPriceDiffs ? ` · lệch giá dưới 1k: ${result.smallPriceDiffs}` : "")
             : [
                 result.priceDiffs && `lệch giá ${result.priceDiffs}`,
+                result.smallPriceDiffs && `lệch giá dưới 1k ${result.smallPriceDiffs}`,
                 result.feeDiffs && `lệch phí ${result.feeDiffs}`,
                 result.metaOnly && `chỉ meta có ${result.metaOnly}`,
                 result.webOnly && `chỉ web có ${result.webOnly}`,
@@ -563,6 +633,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           metaOffers: result.metaOffers,
           matched: result.matched,
           priceDiffs: result.priceDiffs,
+          smallPriceDiffs: result.smallPriceDiffs,
           feeDiffs: result.feeDiffs,
           withVoucher: result.withVoucher,
           metaOnly: result.metaOnly,
@@ -601,6 +672,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           appendHistory({
             key: historyKey(c.from, c.to, tripType), from: c.from, to: c.to, tripType,
             departDate: c.departDate, returnDate: c.returnDate, pax, verdict, runDir, at: new Date().toISOString(),
+            template: c.templateKey,
           });
         }
         // Ghi lại report sau mỗi điều kiện: lỡ dừng giữa chừng vẫn có báo cáo phần đã chạy.
@@ -608,7 +680,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
 
         console.log(
           `[metasearch-v2] ${c.id} ${route} ${dates} ${pax} | meta=${result.metaOffers} web=${result.webResults.items} khớp=${result.matched} ` +
-            `lệch giá=${result.priceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
+            `lệch giá=${result.priceDiffs} lệch<1k=${result.smallPriceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);
         result.warnings.forEach((w) => console.log(`    ⚠ ${w}`));

@@ -89,13 +89,18 @@ export const detailViewCss = `
   .dv-pager button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid #d0d4da; background: #fff; border-radius: 6px; cursor: pointer; }
   .dv-pager button:disabled { opacity: .4; cursor: default; }
   .dv .fee-ok { color: #6b7280; } .dv .fee-bad { color: #b42318; font-weight: 600; }
+  .tag.warn { background: #fef9c3; color: #854d0e; }
+  .dv-sys .warn-t { color: #a16207; font-weight: 600; }
+  .dv .small-diff { color: #a16207; font-weight: 600; }
 `;
 
 /** JS chạy trong trang: render mọi `.dv` từ JSON tương ứng. Không dùng regex/backslash để an toàn trong template. */
 export const detailViewScript = `<script>
 (() => {
-  const STATUSES = ["LỆCH GIÁ", "LỆCH PHÍ", "CHỈ CÓ Ở META", "CHỈ CÓ Ở WEB", "KHỚP"];
-  const TAG = { "KHỚP": "ok", "LỆCH GIÁ": "diff", "LỆCH PHÍ": "diff", "CHỈ CÓ Ở META": "meta", "CHỈ CÓ Ở WEB": "web" };
+  const SMALL = "Lệch giá dưới 1k"; // chênh do làm tròn → cảnh báo vàng, không tính là lệch
+  const STATUSES = ["LỆCH GIÁ", "LỆCH PHÍ", "CHỈ CÓ Ở META", "CHỈ CÓ Ở WEB", SMALL, "KHỚP"];
+  const TAG = { "KHỚP": "ok", "LỆCH GIÁ": "diff", [SMALL]: "warn", "LỆCH PHÍ": "diff", "CHỈ CÓ Ở META": "meta", "CHỈ CÓ Ở WEB": "web" };
+  const isProblem = (r) => r.s !== "KHỚP" && r.s !== SMALL;
   const money = (v) => (typeof v === "number" ? v.toLocaleString("vi-VN") : "—");
   const short = (v) => {
     if (typeof v !== "number") return "—";
@@ -123,14 +128,14 @@ export const detailViewScript = `<script>
     const { labels, rows } = JSON.parse(document.getElementById("dv-data-" + id).textContent);
     if (!rows.length) { root.innerHTML = '<p class="muted">Không có hành trình nào.</p>'; return; }
 
-    const problems = rows.filter((r) => r.s !== "KHỚP").length;
+    const problems = rows.filter(isProblem).length;
     const st = { status: problems ? "PROBLEMS" : "ALL", system: "", q: "", sort: "default", page: 0, size: 25, open: new Set() };
 
     // Tóm tắt theo system
     const bySys = new Map();
     rows.forEach((r) => {
-      const e = bySys.get(r.sy) || { ok: 0, bad: 0 };
-      if (r.s === "KHỚP") e.ok++; else e.bad++;
+      const e = bySys.get(r.sy) || { ok: 0, bad: 0, warn: 0 };
+      if (r.s === "KHỚP") e.ok++; else if (r.s === SMALL) e.warn++; else e.bad++;
       bySys.set(r.sy, e);
     });
     const counts = {};
@@ -151,7 +156,8 @@ export const detailViewScript = `<script>
     const renderSys = () => {
       sysBox.innerHTML = [...bySys.entries()].sort((a, b) => b[1].bad - a[1].bad || b[1].ok - a[1].ok).map(([sy, e]) =>
         '<button data-sy="' + esc(sy) + '" class="' + (st.system === sy ? "on" : "") + '"><b>' + esc(sy) + '</b>: ' +
-        (e.bad ? '<span class="bad">' + e.bad + ' lệch/thiếu</span>' + (e.ok ? " · " : "") : "") + (e.ok ? e.ok + " khớp" : "") + '</button>').join("");
+        [e.bad && '<span class="bad">' + e.bad + " lệch/thiếu</span>", e.warn && '<span class="warn-t">' + e.warn + " lệch &lt;1k</span>", e.ok && e.ok + " khớp"]
+          .filter(Boolean).join(" · ") + "</button>").join("");
     };
     sysBox.addEventListener("click", (e) => {
       const b = e.target.closest("button"); if (!b) return;
@@ -203,7 +209,7 @@ export const detailViewScript = `<script>
     const tbody = $("tbody"), pager = $(".dv-pager");
     const filtered = () => {
       let list = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
-        (st.status === "ALL" || (st.status === "PROBLEMS" ? r.s !== "KHỚP" : r.s === st.status)) &&
+        (st.status === "ALL" || (st.status === "PROBLEMS" ? isProblem(r) : r.s === st.status)) &&
         (!st.system || r.sy === st.system) &&
         (!st.q || (r.lg.map((l) => l[1] + " " + l[2]).join(" ") + " " + r.sy + " " + r.al).toLowerCase().includes(st.q)));
       const by = {
@@ -220,7 +226,8 @@ export const detailViewScript = `<script>
       const slice = list.slice(st.page * st.size, (st.page + 1) * st.size);
       tbody.innerHTML = slice.map(({ r, i }) => {
         const open = st.open.has(i);
-        const diff = r.d ? '<b class="' + (r.d > 0 ? "up" : "down") + '">' + (r.d > 0 ? "+" : "") + money(r.d) + "</b>" : "";
+        const diffClass = r.s === SMALL ? "small-diff" : r.d > 0 ? "up" : "down";
+        const diff = r.d ? '<b class="' + diffClass + '">' + (r.d > 0 ? "+" : "") + money(r.d) + "</b>" : "";
         return '<tr class="row' + (open ? " open" : "") + '" data-i="' + i + '">' +
           '<td class="caret">' + (open ? "▾" : "▸") + "</td>" +
           '<td><span class="tag ' + (TAG[r.s] || "") + '">' + esc(r.s) + "</span></td>" +

@@ -23,6 +23,8 @@ export type HistoryEntry = {
   verdict: string;
   runDir: string;
   at: string;
+  /** Mã case study (template) đã sinh ra điều kiện — để xoay vòng case chưa chạy. */
+  template?: string;
 };
 
 export const historyKey = (from: string, to: string, tripType: string) => `${from}-${to}|${tripType}`;

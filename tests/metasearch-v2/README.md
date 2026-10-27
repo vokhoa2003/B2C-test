@@ -26,6 +26,28 @@ Ví dụ VJ ICN⇄PQC, 2 NL + 1 TE, phí Ticketing 140.000, chiều đi `2 × 3.
 - `totalAmount lệch` — `totalAmount` ≠ NL × `totalAdt` + TE × `totalChd` + EB × `totalInf`. Dùng để kiểm tra lỗi "chỉ cộng 1 người lớn" đã hết chưa.
 - `serviceFeeAmount khác phí theo công thức` — `serviceFeeAmount` meta trả khác phí tính theo công thức v2 (VD hành trình ghép 2 hãng có phí 2 chiều khác nhau, công thức lấy phí chiều đi × 2).
 
+## Case study (metasearch-vs-web-v2.json)
+
+35 case, mỗi case có mã (hiện trong báo cáo: `PAX-09 · Số khách: …`). Mỗi lần chạy lấy `conditionsPerRun` case (xen kẽ nội địa / quốc tế), **ưu tiên case chưa chạy lần nào** (ghi trong lịch sử v2) → chạy vài lần là phủ hết bộ.
+
+| Nhóm | Nội dung |
+|---|---|
+| **PAX-01 … 15** — số khách | 1 NL · 1 NL + 1 EB · 1 NL + 1 TE · 1 NL + 1 TE + 1 EB · 2 NL · 2 NL + 2 EB (EB = NL) · 2 NL + 1 TE + 1 EB · 2 NL + 2 TE + 2 EB · 3 NL + 2 TE + 1 EB · **9 NL** · **4 NL + 3 TE + 2 EB** · **3 NL + 3 TE + 3 EB** · **1 NL + 8 TE** · **5 NL + 4 TE** (đủ 9) · 1 NL + 1 EB quốc tế khứ hồi — chặng phổ biến để chắc có kết quả |
+| **TRIP-01 … 09** — hành trình | 1 chiều gần ngày (3–7 ngày tới) / xa ngày (90–150) · khứ hồi **trong ngày** · khứ hồi 1 đêm · khứ hồi dài 14–21 ngày · quốc tế khứ hồi ngắn 2–3 ngày / dài 20–30 ngày · quốc tế 1 chiều gần ngày · quốc tế xa ngày (120–180) |
+| **ROUTE-01 … 11** — chặng | trục SGN/HAN/DAD · trục ↔ miền Bắc / Trung / Nam · liên vùng không qua trục · Trung ↔ Nam không qua trục · sân bay nhỏ (DIN, VDO, VCS, VKG, CAH, TBB, PXU, VCL, VDH) · quốc tế Đông Nam Á · Đông Bắc Á · đường dài (Úc, Trung Đông, châu Âu, Mỹ) · quốc tế từ sân bay VN phụ (CXR, PQC, HPH, DLI, VCA, VDO, HUI, VII, VCL) |
+
+- **Đủ 22 sân bay Việt Nam** (đã đối chiếu `GET /flights/airports`: BMV, CAH, CXR, DAD, DIN, DLI, HAN, HPH, HUI, PQC, PXU, SGN, TBB, THD, UIH, VCA, VCL, VCS, VDH, VDO, VII, VKG) — sân bay nào cũng làm điểm đi / điểm đến trong ít nhất 1 case.
+- **Kiểm tra số khách** khi khởi động, giống ô chọn khách trên web: người lớn ≥ 1, **em bé ≤ người lớn**, **tổng NL + TE + EB ≤ 9**. Case sai → dừng ngay, báo rõ case nào sai gì.
+- Field thêm của case (đều tuỳ chọn): `id` (mã case), `routes` (nhóm chặng, chọn ngẫu nhiên 1 cặp, cả 2 chiều), `daysAhead: [min, max]` (ngày bay = hôm nay + …), `stayDays: [min, max]` (khứ hồi: số ngày lưu trú, `0` = về trong ngày).
+
+```bash
+yarn compare:metasearch:v2 --dry-run --count 10               # chỉ in 10 điều kiện sẽ chạy, KHÔNG search
+yarn compare:metasearch:v2 --case PAX                          # chỉ nhóm PAX
+yarn compare:metasearch:v2 --case PAX-10,PAX-12,TRIP-03 --count 3
+yarn compare:metasearch:v2 --case ROUTE --route dom --count 7  # mọi case chặng nội địa
+yarn compare:metasearch:v2 --count 35                          # chạy hết 35 case 1 lượt
+```
+
 ## Dữ liệu web
 
 Đặt `WEB_API_TOKEN` trong `.env` để tool gọi thẳng API web thay vì bắt qua browser (browser không đọc được response lớn như GALILEO_NDC ~10 MB) — cách lấy token xem [v1 mục 1](../metasearch/README.md#1-chuẩn-bị). Áp dụng cho cả v1 lẫn v2.

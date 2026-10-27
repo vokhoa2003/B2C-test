@@ -51,7 +51,8 @@ function parseCsv(text) {
 function conditionState(c) {
   const verdict = c.verdict || "";
   if (verdict.startsWith("KHÔNG SO ĐƯỢC") || /^(TIMEOUT|LỖI)/.test(c.webStatus || "") || /^LỖI/.test(c.metaStatus || "")) return "fail";
-  return verdict === "KHỚP" ? "ok" : "diff";
+  // "KHỚP · lệch giá dưới 1k: N" (chênh do làm tròn) vẫn tính là khớp.
+  return verdict.startsWith("KHỚP") ? "ok" : "diff";
 }
 
 /** "2026-10-22T16-03-55-880Z" → Date */
