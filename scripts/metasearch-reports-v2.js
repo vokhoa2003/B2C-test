@@ -57,12 +57,17 @@ function conditionState(c) {
   const verdict = c.verdict || "";
   if (verdict.startsWith("KHÔNG SO ĐƯỢC") || /^(TIMEOUT|LỖI)/.test(c.webStatus || "") || /^LỖI/.test(c.metaStatus || "")) return "fail";
   if (num(c.priceDiffs) + num(c.feeDiffs)) return "diff";
-  return num(c.smallPriceDiffs) + num(c.metaOnly) + num(c.webOnly) ? "warn" : "ok";
+  return num(c.smallPriceDiffs) + num(c.metaOnly) + num(c.webOnly) + num(c.firstRunPriceDiffs) ? "warn" : "ok";
 }
 /** Nhãn cảnh báo: "Cảnh báo · lệch < 1k 2, chỉ meta có 3". */
 const warnLabel = (c) =>
   "Cảnh báo · " +
-  [num(c.smallPriceDiffs) && `lệch < 1k ${c.smallPriceDiffs}`, num(c.metaOnly) && `chỉ meta có ${c.metaOnly}`, num(c.webOnly) && `chỉ web có ${c.webOnly}`]
+  [
+    num(c.firstRunPriceDiffs) && `lần search đầu lệch giá ${c.firstRunPriceDiffs}, search lại hết lệch`,
+    num(c.smallPriceDiffs) && `lệch < 1k ${c.smallPriceDiffs}`,
+    num(c.metaOnly) && `chỉ meta có ${c.metaOnly}`,
+    num(c.webOnly) && `chỉ web có ${c.webOnly}`,
+  ]
     .filter(Boolean).join(", ");
 /** "3,2s" — thời gian phản hồi (summary.csv: webMs / metaMs). */
 const secs = (ms) => (ms === "" || ms == null || isNaN(Number(ms)) ? "—" : `${(Number(ms) / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}s`);

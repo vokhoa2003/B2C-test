@@ -1,0 +1,25 @@
+{
+  "conditionsPerRun": 3,
+  "hotelsPerCondition": 20,
+  "minHotels": 10,
+  "maxHotels": 30,
+  "fetchDetail": true,
+  "detailConcurrency": 4,
+  "timeoutMs": 90000,
+  "locations": {
+    "domestic": ["Đà Nẵng", "Nha Trang", "Phu Quoc Island", "Hà Nội", "Hồ Chí Minh", "Đà Lạt", "Hội An", "Hạ Long", "Quy Nhơn", "Huế"],
+    "international": ["Singapore", "Kuala Lumpur", "Taipei"]
+  },
+  "templates": [
+    { "id": "H-01", "description": "1 phòng · 2 NL · 1 đêm", "rooms": 1, "adults": 2, "children": 0, "nights": [1, 1], "daysAhead": [7, 30] },
+    { "id": "H-02", "description": "1 phòng · 2 NL · 2–3 đêm", "rooms": 1, "adults": 2, "children": 0, "nights": [2, 3], "daysAhead": [14, 45] },
+    { "id": "H-03", "description": "2 phòng · 4 NL · 2 đêm (markup PER_ROOM / PER_ROOM_NIGHT nhân khác)", "rooms": 2, "adults": 4, "children": 0, "nights": [2, 2], "daysAhead": [10, 40] },
+    { "id": "H-04", "description": "1 phòng · 2 NL + 1 TE · 2 đêm", "rooms": 1, "adults": 2, "children": 1, "childrenAges": [6], "nights": [2, 2], "daysAhead": [10, 40] },
+    { "id": "H-05", "description": "3 phòng · 6 NL · 1 đêm", "rooms": 3, "adults": 6, "children": 0, "nights": [1, 1], "daysAhead": [20, 60] },
+    { "id": "H-06", "description": "1 phòng · 1 NL · ở dài 7–10 đêm", "rooms": 1, "adults": 1, "children": 0, "nights": [7, 10], "daysAhead": [30, 60] },
+    { "id": "H-07", "description": "1 phòng · 2 NL · nhận phòng hôm nay / ngày mai", "rooms": 1, "adults": 2, "children": 0, "nights": [1, 1], "daysAhead": [0, 1] },
+    { "id": "H-08", "description": "2 phòng · 3 NL + 2 TE · 4 đêm · xa ngày", "rooms": 2, "adults": 3, "children": 2, "childrenAges": [5, 10], "nights": [4, 4], "daysAhead": [60, 120] },
+    { "id": "H-09", "description": "Quốc tế · 1 phòng · 2 NL · 2 đêm", "rooms": 1, "adults": 2, "children": 0, "nights": [2, 2], "daysAhead": [14, 45], "region": "international" },
+    { "id": "H-10", "description": "Quốc tế · 2 phòng · 4 NL · 3 đêm", "rooms": 2, "adults": 4, "children": 0, "nights": [3, 3], "daysAhead": [30, 90], "region": "international" }
+  ]
+}

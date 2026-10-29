@@ -8,7 +8,7 @@ import { FlightSearchApiCapture } from "../pages/flight/FlightSearchApiCapture";
 import { WebSearchClient, WebSystems, loginWebApi } from "../helpers/webSearchClient";
 import { MetasearchToolPage } from "../pages/metasearch/MetasearchToolPage";
 import { labelTab, launchReviewBrowser } from "../helpers/reviewBrowser";
-import { FareItem, compareMetaAgainstWeb, markNearDeparture } from "../helpers/metasearchCompareV2";
+import { CompareResult, DetailRow, FareItem, compareMetaAgainstWeb, markNearDeparture } from "../helpers/metasearchCompareV2";
 import {
   AIRPORT_CATALOG,
   AIRPORTS_FILE,
@@ -23,6 +23,8 @@ import {
 import { appendHistory, historyKey, loadHistory, HISTORY_FILE } from "../helpers/metasearchHistoryV2";
 import {
   ConditionReport,
+  FirstRunInfo,
+  writeDiffJsons,
   CsvFile,
   DETAIL_COLUMNS,
   createRunDir,
@@ -476,6 +478,20 @@ function rerunCommand(c: Condition): string {
   ].filter(Boolean).join(" ");
 }
 
+/**
+ * Có lệch giá ở lần search đầu thì tự search lại 1 lần (mặc định bật). Tắt: cờ --no-recheck (env META_RECHECK=0)
+ * hoặc "recheckOnPriceDiff": false trong JSON.
+ */
+const RECHECK = process.env.META_RECHECK !== "0" && (DATA as { recheckOnPriceDiff?: boolean }).recheckOnPriceDiff !== false;
+/** Khoá 1 dòng so khớp (system + chặng + hạng ghế + giá meta) để biết dòng lệch lần đầu có hết khi search lại không. */
+const rowKey = (r: DetailRow) => `${r.system}#${r.legs.map((l) => l.key).join("#")}#${r.metaClass}#${r.metaBasePrice}`;
+/** "GALILEO_NDC 16, VN 2" — system của các dòng lệch giá. */
+const diffSystems = (result: CompareResult) => {
+  const counts = new Map<string, number>();
+  for (const r of result.rows) if (r.status === "LỆCH GIÁ") counts.set(r.system, (counts.get(r.system) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([sy, n]) => `${sy} ${n}`).join(", ");
+};
+
 const systemOf = (s: { requestBody: Record<string, unknown> | null }) =>
   (s.requestBody?.flights as { airline?: string }[] | undefined)?.[0]?.airline ?? "?";
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
@@ -572,7 +588,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
       "id", "description", "route", "flightType", "tripType", "departDate", "returnDate", "pax",
       "webStatus", "metaStatus", "webMs", "metaMs", "webRawItems", "metaRawItems",
       "metaOffers", "matched", "priceDiffs", "smallPriceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
-      "searchedAt", "within24h", "within24hProblems", "metaDeeplinkRoute", "verdict", "webUrl", "webSystemMs",
+      "searchedAt", "within24h", "within24hProblems", "metaDeeplinkRoute", "verdict", "webUrl", "webSystemMs", "firstRunPriceDiffs", "firstRunCleared",
     ]);
     const detailsCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "details.csv"), [...DETAIL_COLUMNS]);
 
@@ -645,35 +661,71 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
               return tool.searchAndCapture(metaBody, d.metaTimeoutMs);
             }
           : () => meta.search(metaBody, d.metaTimeoutMs);
-        // Mốc tính "cất cánh trong 24h": lúc gửi search 2 bên.
-        const searchedAt = new Date();
-        const [webRes, metaRes] = await Promise.all([
-          searchWeb(),
-          searchMeta().catch((err: Error) => ({ status: 0, ms: 0, data: { message: err.message } as MetasearchResponse })),
-        ]);
+        // 1 lượt search 2 bên song song + so khớp. Mốc tính "cất cánh trong 24h": lúc gửi search.
+        const searchBoth = async () => {
+          const searchedAt = new Date();
+          const [webRes, metaRes] = await Promise.all([
+            searchWeb(),
+            searchMeta().catch((err: Error) => ({ status: 0, ms: 0, data: { message: err.message } as MetasearchResponse })),
+          ]);
+          const allWebItems: FareItem[] = webRes.searches.flatMap((s) => s.fareData);
+          const allMetaItems: FareItem[] = metaRes.data.fareData ?? [];
+          // --airline: chỉ so hành trình của hãng đã chọn (raw/ và trang meta vẫn giữ đủ dữ liệu).
+          const webItems = allWebItems.filter(matchesAirline);
+          const metaItems = allMetaItems.filter(matchesAirline);
+          const result = compareMetaAgainstWeb(metaItems, webItems, c.itinerary ? 2 : 1);
+          markNearDeparture(result, searchedAt);
+          const ok = !webRes.timedOut && metaRes.status === 200 && !metaRes.data.errorCode;
+          return { searchedAt, webRes, metaRes, allWebItems, allMetaItems, webItems, metaItems, result, ok };
+        };
+        const saveRaw = (suffix: string, r: Awaited<ReturnType<typeof searchBoth>>) => {
+          fs.writeFileSync(path.join(runDir, "raw", `${c.id}-web${suffix}.json`), JSON.stringify({ condition: c, ...r.webRes }, null, 1));
+          fs.writeFileSync(path.join(runDir, "raw", `${c.id}-meta${suffix}.json`), JSON.stringify({ condition: c, request: metaBody, ...r.metaRes }, null, 1));
+        };
+
+        let attempt = await searchBoth();
+        // Lần search đầu hay lệch giá (chủ yếu GALILEO_NDC): meta và web gọi vendor 2 phiên riêng cùng lúc, vendor trả
+        // giá/offer khác nhau; search lại thì vendor trả từ cache nên 2 bên giống nhau. → Có lệch giá thì search lại
+        // 1 lần, lấy kết quả lần 2 làm kết luận và ghi lại lệch của lần đầu (raw lần đầu: raw/cond-N-*-1.json).
+        let firstRun: FirstRunInfo | undefined;
+        let firstRunJson: { count: number; dir: string } | undefined;
+        if (RECHECK && attempt.ok && attempt.result.priceDiffs > 0) {
+          const first = attempt;
+          console.log(`    lần search đầu lệch giá ${first.result.priceDiffs} (${diffSystems(first.result)}) → search lại để loại lệch do vendor trả khác giữa 2 phiên…`);
+          saveRaw("-1", first);
+          firstRunJson = writeDiffJsons(runDir, `${c.id}-lan-dau`, { condition: c, request: metaBody, attempt: "lần search đầu" }, first.result, first.webRes.searches);
+          const second = await searchBoth();
+          if (second.ok) {
+            attempt = second;
+            const stillBad = new Set(second.result.rows.filter((r) => r.status === "LỆCH GIÁ").map(rowKey));
+            firstRun = {
+              priceDiffs: first.result.priceDiffs,
+              systems: diffSystems(first.result),
+              cleared: first.result.rows.filter((r) => r.status === "LỆCH GIÁ" && !stillBad.has(rowKey(r))).length,
+              webMs: first.webRes.ms,
+              metaMs: first.metaRes.ms,
+            };
+          } else {
+            console.log("    search lại lỗi — giữ kết quả lần đầu");
+          }
+        }
+        const { searchedAt, webRes, metaRes, allWebItems, allMetaItems, webItems, metaItems, result } = attempt;
         if (metaPage) {
           await labelTab(metaPage, `[${c.id} META] ${route}`);
           if (webPage) await labelTab(webPage, `[${c.id} WEB] ${route}`);
         } else {
           await webPage?.close();
         }
+        saveRaw("", attempt);
+        // Mỗi hành trình lệch giá / lệch phí: 1 file JSON nguyên dữ liệu API 2 bên (diffs/cond-N/).
+        const diffJson = { ...writeDiffJsons(runDir, c.id, { condition: c, request: metaBody }, result, webRes.searches), firstRun: firstRunJson };
 
-        fs.writeFileSync(path.join(runDir, "raw", `${c.id}-web.json`), JSON.stringify({ condition: c, ...webRes }, null, 1));
-        fs.writeFileSync(path.join(runDir, "raw", `${c.id}-meta.json`), JSON.stringify({ condition: c, request: metaBody, ...metaRes }, null, 1));
-
-        const allWebItems: FareItem[] = webRes.searches.flatMap((s) => s.fareData);
-        const allMetaItems: FareItem[] = metaRes.data.fareData ?? [];
-        // --airline: chỉ so hành trình của hãng đã chọn (raw/ và trang meta vẫn giữ đủ dữ liệu).
-        const webItems = allWebItems.filter(matchesAirline);
-        const metaItems = allMetaItems.filter(matchesAirline);
         const description = c.description + (AIRLINE_FILTER.length ? ` · hãng ${AIRLINE_FILTER.join(", ")}` : "");
         if (AIRLINE_FILTER.length) {
           console.log(
             `    lọc hãng ${AIRLINE_FILTER.join(",")}: meta ${allMetaItems.length} → ${metaItems.length} item, web ${allWebItems.length} → ${webItems.length} item`
           );
         }
-        const result = compareMetaAgainstWeb(metaItems, webItems, c.itinerary ? 2 : 1);
-        markNearDeparture(result, searchedAt);
         const near = nearDepartureText(result.nearDeparture);
 
         const reloadNote = webRes.reloads ? `, tải lại trang ${webRes.reloads} lần` : "";
@@ -689,7 +741,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         // 1 bên không lấy được dữ liệu thì không được kết luận KHỚP (0 = 0 chỉ là do thiếu dữ liệu).
         const verdict = webRes.timedOut || !metaOk
           ? `KHÔNG SO ĐƯỢC (${[webRes.timedOut && `web ${webRes.error}`, !metaOk && "meta lỗi"].filter(Boolean).join(", ")})`
-          : result.priceDiffs + result.feeDiffs + result.smallPriceDiffs + result.metaOnly + result.webOnly === 0
+          : result.priceDiffs + result.feeDiffs + result.smallPriceDiffs + result.metaOnly + result.webOnly + (firstRun?.priceDiffs ?? 0) === 0
             ? "KHỚP"
             // Chỉ lệch giá lớn / lệch phí mới là LỖI. Lệch < 1k (làm tròn) và chuyến chỉ 1 bên có → CẢNH BÁO (vàng).
             : (result.priceDiffs + result.feeDiffs ? "" : "CẢNH BÁO · ") +
@@ -699,6 +751,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
                 result.smallPriceDiffs && `lệch giá dưới 1k ${result.smallPriceDiffs}`,
                 result.metaOnly && `chỉ meta có ${result.metaOnly}`,
                 result.webOnly && `chỉ web có ${result.webOnly}`,
+                firstRun && `lần search đầu lệch giá ${firstRun.priceDiffs} (search lại hết ${firstRun.cleared})`,
               ].filter(Boolean).join(", ");
         const deeplink = checkDeeplink(metaRes.data.fareData?.[0]?.dayViewDeeplinks, c);
 
@@ -732,6 +785,8 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           verdict,
           webUrl,
           webSystemMs,
+          firstRunPriceDiffs: firstRun?.priceDiffs ?? "",
+          firstRunCleared: firstRun?.cleared ?? "",
         }]);
         detailsCsv.append(result.rows.map((r) => detailToCsvRow(c.id, route, r)));
 
@@ -756,7 +811,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         reports.push({
           id: c.id, description, route, dates, pax, webStatus, metaStatus, deeplink, webUrl,
           metaSnapshotHref, metaToolHref, verdict, result, searchedAt: searchedAt.toLocaleString("vi-VN"),
-          webMs: webRes.ms, metaMs: metaRes.ms, webSystemMs,
+          webMs: webRes.ms, metaMs: metaRes.ms, webSystemMs, firstRun, diffJson,
           rerunCommand: rerunCommand(c),
         });
         // Chỉ ghi lịch sử khi so được cả 2 bên — điều kiện lỗi/timeout để lần sau chạy lại.

@@ -9,7 +9,15 @@ export type CapturedSearch = {
   bodyError?: string;
   /** Thời gian phản hồi của request này (chỉ có khi gọi API web trực tiếp). */
   ms?: number;
+  /** Các field còn lại của response (ngoài fareData) — response đầy đủ = { ...responseExtra, fareData }. */
+  responseExtra?: Record<string, unknown>;
 };
+
+/** Tách response `/flights/search/` thành fareData + các field còn lại (không lưu trùng fareData). */
+export function splitSearchResponse(json: unknown): { fareData: FareItem[]; responseExtra: Record<string, unknown> } {
+  const { fareData, ...rest } = (json && typeof json === "object" ? json : {}) as Record<string, unknown>;
+  return { fareData: Array.isArray(fareData) ? (fareData as FareItem[]) : [], responseExtra: rest };
+}
 
 export type WebSearchCaptureResult = {
   url: string;
@@ -86,7 +94,7 @@ export class FlightSearchApiCapture {
           bodyError = err.message.split("\n")[0];
           return {};
         });
-        searches.push({ requestBody, status: res.status(), fareData: Array.isArray(json?.fareData) ? json.fareData : [], bodyError });
+        searches.push({ requestBody, status: res.status(), ...splitSearchResponse(json), bodyError });
         onDone();
       })();
       pending.add(task);

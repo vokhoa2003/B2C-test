@@ -1,5 +1,5 @@
 import { APIRequestContext } from "@playwright/test";
-import { CapturedSearch, WebSearchCaptureResult } from "../pages/flight/FlightSearchApiCapture";
+import { CapturedSearch, WebSearchCaptureResult, splitSearchResponse } from "../pages/flight/FlightSearchApiCapture";
 
 /**
  * Lấy kết quả search của web bằng cách GỌI THẲNG API mà trang dev.triphubs.vn dùng
@@ -67,7 +67,7 @@ export class WebSearchClient {
             timeout,
           });
           const json = await res.json().catch(() => ({}));
-          return { requestBody, status: res.status(), fareData: Array.isArray(json?.fareData) ? json.fareData : [], ms: Date.now() - started };
+          return { requestBody, status: res.status(), ...splitSearchResponse(json), ms: Date.now() - started };
         } catch (err) {
           return { requestBody, status: 0, fareData: [], bodyError: (err as Error).message.split("\n")[0], ms: Date.now() - started };
         }

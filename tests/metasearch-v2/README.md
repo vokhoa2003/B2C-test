@@ -2,29 +2,47 @@
 
 Bản v2 của [tool so sánh metasearch](../metasearch/README.md). **Bản v1 giữ nguyên**, v2 chạy song song, có lệnh, cấu hình, lịch sử và báo cáo riêng.
 
-v2 giống v1 ở mọi thứ (cách lấy dữ liệu 2 bên, ghép hành trình, cờ dòng lệnh, chế độ review, trang metaSearch trong báo cáo…), **chỉ khác công thức giá**.
+v2 giống v1 ở cách lấy dữ liệu 2 bên, ghép hành trình, cờ dòng lệnh, chế độ review, trang metaSearch trong báo cáo…; khác ở **công thức giá** (theo luồng CMS mới), **hạng ghế** của từng giá, case study, cảnh báo 24h, danh mục sân bay.
 
 ## Công thức giá v2
 
+Theo traveleasy-cms từ 28/10 (`includeMarkupFees()` trong `metasearch.utils.ts`): **meta đã cộng phí markup vào giá trả về**, nên tool không cộng phí cho meta nữa.
+
 ```
-Giá so sánh = giá vé + (phí ADULT × số người lớn + phí CHILD × số trẻ em) × (2 nếu khứ hồi, 1 nếu 1 chiều)
+META = totalAmount + estimatedVoucherDiscount                 (đã gồm phí, cộng lại voucher)
+WEB  = giá vé hạng đó + (phí ADULT × số NL + phí CHILD × số TE) của từng chiều
 ```
 
-- **Giá vé** tuỳ system (giống cách nhận diện `isGalileoSystem` của web):
-  - **GALILEO** (`GALILEO_NDC`, `GALILEO`): `totalAmount` API trả (combo khứ hồi: giá trọn gói ở chặng đầu).
-  - **System khác** (VN, VJ, VU, 9G…): **theo số khách**, cộng từng chiều — `NL × totalAdt + TE × totalChd + EB × totalInf` (`totalAdt`/`totalChd`/`totalInf` là giá 1 người).
-  - **Vé combo** không phải GALILEO (VD VN quốc tế khứ hồi — meta `compositeFareId` không có `_`, web 1 item chứa cả 2 chiều): mỗi chiều đã mang giá **cả chuyến** → chỉ lấy giá chiều đầu, không cộng 2 chiều (như FE web xử lý VN combo).
-- **Em bé không tính phí.**
-- **Phí** lấy từ `fees` theo loại khách: meta ở `flights[0].fees`, web ở `fareData.fees` (combo: của item; 2 chặng lẻ: của chặng đi).
-- **Voucher meta**: meta đã trừ voucher AUTO_APPLY (phân bổ vào giá từng khách) → cộng lại `estimatedVoucherDiscount` trước khi so (web chưa trừ voucher).
-- **Khớp** = giá vé bằng 1 trong các hạng vé web **và** phí bằng nhau. Trạng thái giống v1: KHỚP / LỆCH GIÁ / LỆCH PHÍ / CHỈ CÓ Ở META / CHỈ CÓ Ở WEB.
+- **Meta**: `totalAmount` (= deeplink `total_amount`) đã gồm phí markup (cộng vào `tax*`/`total*` của NL, TE) và đã trừ voucher AUTO_APPLY → cộng lại voucher để so với web (web chưa trừ voucher). Response cũ (trước 28/10: `total_amount` = `totalAmount` + `serviceFeeAmount`) được tự nhận ra và vẫn cộng `serviceFeeAmount`.
+- **Web**: FE tự cộng phí, nên tool cộng phí theo công thức:
+  - **Giá vé** tuỳ system (giống `isGalileoSystem` của web): **GALILEO** (`GALILEO_NDC`, `GALILEO`) = `totalAmount`; **system khác** (VN, VJ, VU, 9G…) = `NL × totalAdt + TE × totalChd + EB × totalInf` (giá 1 người).
+  - **Phí** lấy từ `fareData.fees`: combo khứ hồi = phí × 2; 2 chặng lẻ = mỗi chiều cộng phí của chính nó (như CMS tính SEPARATE).
+- **Em bé**: không cộng phí, **không trừ voucher** → giá 1 em bé (`totalInf`) meta phải bằng web; lệch → cảnh báo ⚠.
+- **Hạng ghế**: mỗi giá (meta, web, từng mức giá web) hiện kèm hạng ghế `cabinClass · fareType`, VD `Eco · A`, `ECONOMY LITE · E`; khứ hồi 2 chặng lẻ: `hạng đi | hạng về`. CSV `details.csv` có cột `metaClass`, `webClass`.
+- **Dữ liệu API** — mở 1 dòng trong bảng chi tiết, mục "Dữ liệu API — số từ đâu ra": mỗi bên (META | WEB) từng chiều có bảng `fare / tax / fee / total` 1 người theo loại khách (người lớn / trẻ em / em bé) × số khách, `totalAmount` của chiều, phí markup (`fees`) và các bước ra giá so sánh (voucher, phí). Bên web là đúng hạng vé đã dùng để so; hành trình chỉ web có thì lấy hạng rẻ nhất.
+- **JSON hành trình lệch** — mỗi hành trình **LỆCH GIÁ / LỆCH PHÍ** được lưu 1 file `diffs/cond-N/<NNN>-<system>-<số hiệu>.json` gồm `condition`, `request` (body search), `comparison` (giá 2 bên, chênh, hạng ghế, cách tính) và **nguyên item API**: `metaItem` (offer meta) + `webItems` (các item combo / chặng lẻ web đã dùng để so). Cùng thư mục có **response web đầy đủ** của từng system có hành trình lệch: `web-response-<SYSTEM>.json` (`request` đã gửi, `status`, `ms`, `response` nguyên vẹn — các field của response + toàn bộ `fareData`; ghi gọn 1 dòng, GALILEO_NDC ~20 MB, mở bằng editor rồi Format Document); file hành trình trỏ tới qua `webResponseFiles`. Lần search đầu (khi đã tự search lại) lưu ở `diffs/cond-N-lan-dau/`. Mở: dòng "JSON từng hành trình lệch" của điều kiện, link "JSON hành trình này" khi mở 1 dòng, hoặc cột `jsonFile` trong `details.csv`.
+- **Khớp** = giá meta bằng 1 trong các mức giá web. Giá vé bằng nhau (bỏ phí 2 bên) mà giá cuối khác → **LỆCH PHÍ**. Chênh < 1.000đ → **Lệch giá dưới 1k** (cảnh báo).
 
-Ví dụ VJ ICN⇄PQC, 2 NL + 1 TE, phí Ticketing 140.000, chiều đi `2 × 3.440.000 + 3.317.000 = 10.197.000` + chiều về `10.331.000` → giá vé `20.528.000`; cộng phí `140.000 × 3 × 2 = 840.000` → **21.368.000**.
+Ví dụ VJ899 SGN→DPS, 1 NL: meta `1.519.000` (đã gồm phí) = web `1.379.000` (Eco · A) + phí `140.000` → **KHỚP**.
 
 ### Cảnh báo ⚠ (trong report và console, không ảnh hưởng kết luận)
 
 - `totalAmount lệch` — `totalAmount` ≠ NL × `totalAdt` + TE × `totalChd` + EB × `totalInf`. Dùng để kiểm tra lỗi "chỉ cộng 1 người lớn" đã hết chưa.
-- `serviceFeeAmount khác phí theo công thức` — `serviceFeeAmount` meta trả khác phí tính theo công thức v2 (VD hành trình ghép 2 hãng có phí 2 chiều khác nhau, công thức lấy phí chiều đi × 2).
+- `serviceFeeAmount khác phí theo công thức` — phí meta trả khác phí tính lại (COMBINED: phí chiều đầu × số chiều; SEPARATE: mỗi chiều phí của chính nó).
+- `giá em bé khác web` — em bé bị trừ voucher hoặc bị cộng phí (không được phép).
+- `định dạng cũ` — response meta chưa gồm phí trong `totalAmount`.
+
+### Tự search lại khi lệch giá
+
+Lần search đầu một điều kiện hay **lệch giá ở GALILEO_NDC**, chạy lại cùng điều kiện thì hết. Đối chiếu các cặp lần chạy trùng điều kiện cho thấy lỗi không nằm ở phần ghép dữ liệu:
+- meta và web gọi vendor **2 phiên riêng, cùng lúc** → vendor NDC trả giá/offer khác nhau (VD LAX⇄HAN: meta có mức 197.449.000, web lần đó không có);
+- lần sau vendor trả từ cache (web chỉ ~1,5s) → 2 bên cùng dữ liệu, khớp hết.
+
+Vì vậy, điều kiện nào có **lệch giá** ở lần đầu thì tool **tự search lại 1 lần** và lấy kết quả lần 2 làm kết luận. Lệch của lần đầu vẫn được ghi lại vì khách thật cũng có thể gặp:
+- báo cáo: dòng ⚠ "Lần search đầu lệch giá N (GALILEO_NDC …) → đã tự search lại: hết lệch X, còn Y"; cột Lệch giá ghi thêm "lần đầu N"; kết luận vàng `CẢNH BÁO · lần search đầu lệch giá N (search lại hết X)`;
+- `summary.csv`: cột `firstRunPriceDiffs`, `firstRunCleared`; dữ liệu lần đầu: `raw/cond-N-meta-1.json`, `raw/cond-N-web-1.json`.
+
+Tắt: `--no-recheck` (hoặc `"recheckOnPriceDiff": false` trong JSON).
 
 ## Case study (metasearch-vs-web-v2.json)
 

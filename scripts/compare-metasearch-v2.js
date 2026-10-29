@@ -25,7 +25,7 @@ const { spawnSync } = require("child_process");
 // Trùng đường dẫn với HISTORY_FILE trong tests/helpers/metasearchHistoryV2.ts.
 const HISTORY_FILE = path.join(__dirname, "..", ".test-state", "metasearch-compare-v2", "history.json");
 const USAGE = [
-  "Dùng: --trip oneway|roundtrip|all  --route domestic|international|all  --count N  --case PAX-09,ROUTE  --24h  --dry-run  --repeat  --review  --clear-history  --headed  --ui",
+  "Dùng: --trip oneway|roundtrip|all  --route domestic|international|all  --count N  --case PAX-09,ROUTE  --24h  --no-recheck  --dry-run  --repeat  --review  --clear-history  --headed  --ui",
   "Chỉ định hành trình: --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD|today|tomorrow|+N] [--return …]",
   "Số khách / hãng (dùng kèm mọi chế độ): --adt N --chd N --inf N (em bé ≤ người lớn, tổng ≤ 9)  --airline VNA (hoặc VN,VJ)",
 ].join("\n");
@@ -101,6 +101,11 @@ for (let i = 0; i < args.length; i++) {
   // Case 24h ngẫu nhiên: mọi case (khách, chặng, hành trình ngẫu nhiên như thường) bay hôm nay / ngày mai.
   if (arg === "--24h") {
     env.META_NEAR_24H = "1";
+    continue;
+  }
+  // Mặc định: lần search đầu có lệch giá thì tự search lại 1 lần (vendor hay trả khác nhau giữa 2 phiên). Tắt bằng cờ này.
+  if (arg === "--no-recheck") {
+    env.META_RECHECK = "0";
     continue;
   }
   if (arg === "--dry-run") {

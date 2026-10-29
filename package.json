@@ -20,7 +20,9 @@
     "compare:metasearch:v2:review": "node scripts/compare-metasearch-v2.js --review",
     "compare:metasearch:v2:clear": "node scripts/compare-metasearch-v2.js --clear-history",
     "compare:metasearch:v2:reports": "node scripts/metasearch-reports-v2.js",
-    "compare:metasearch:v2:open": "node scripts/metasearch-reports-v2.js --live"
+    "compare:metasearch:v2:open": "node scripts/metasearch-reports-v2.js --live",
+    "hotel:price": "node scripts/hotel-price.js",
+    "hotel:price:reports": "node scripts/hotel-price-reports.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

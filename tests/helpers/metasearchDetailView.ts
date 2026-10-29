@@ -30,7 +30,39 @@ export type DetailRowLike = {
   note: string;
   /** Giờ từ lúc search tới giờ cất cánh chặng đi (chỉ v2 gắn) — < 24 thì đánh dấu "trong 24h". */
   hoursToDepart?: number | null;
+  /** Hạng ghế của giá meta, VD "Eco · A" (chỉ v2). */
+  metaClass?: string;
+  /** Hạng ghế của từng giá web (key = giá, chỉ v2). */
+  webClasses?: Record<string, string>;
+  /** Dữ liệu API 2 bên (chỉ v2): fare/tax/fee/total từng loại khách, phí markup, cách ra giá so sánh. */
+  breakdown?: { meta?: BreakdownSide; web?: BreakdownSide };
+  /** File JSON đã lưu của hành trình (chỉ v2, dòng lệch). */
+  jsonHref?: string;
 };
+
+type PaxPriceLike = { n: number; fare: number | null; tax: number | null; fee: number | null; total: number | null };
+type BreakdownSide = {
+  invs: { dir: number; flight: string; cls: string; adt: PaxPriceLike; chd: PaxPriceLike; inf: PaxPriceLike; totalAmount: number | null }[];
+  fees: { dir: number | null; paxType: string; amount: number }[];
+  formula: string[];
+};
+
+/**
+ * Nén dữ liệu API thành mảng (bỏ tên field, bỏ loại khách 0 người) để report.html nhẹ — hàng nghìn dòng mỗi điều kiện.
+ * inv: [dir, flight, cls, totalAmount, adt, chd, inf] với mỗi loại khách = [n, fare, tax, fee, total] hoặc 0.
+ * Giải nén ở `unpack` trong detailViewScript.
+ */
+function packBreakdown(bd: DetailRowLike["breakdown"]) {
+  if (!bd) return undefined;
+  const pax = (p: PaxPriceLike) => (p.n > 0 ? [p.n, p.fare, p.tax, p.fee, p.total] : 0);
+  const side = (s?: BreakdownSide) =>
+    s && [
+      s.invs.map((i) => [i.dir, i.flight, i.cls, i.totalAmount, pax(i.adt), pax(i.chd), pax(i.inf)]),
+      s.fees.map((f) => [f.dir, f.paxType, f.amount]),
+      s.formula,
+    ];
+  return [side(bd.meta) || 0, side(bd.web) || 0];
+}
 
 export type DetailViewLabels = {
   /** Cột giá chính META, VD "Giá META (trước voucher)" / "Giá vé META (+ voucher)". */
@@ -51,7 +83,7 @@ export function detailView(condId: string, rows: DetailRowLike[], labels: Detail
     mp: r.metaPrice, vc: r.voucherCode, vd: r.voucherDiscount, mb: r.metaBasePrice, ml: r.metaLegPrices,
     wc: r.webClosestPrice, wp: r.webPrices, wl: r.webLegPrices, d: r.diff, dl: r.diffLegs,
     mf: r.metaServiceFee, wf: r.webServiceFee, mt: r.metaFinal, wt: r.webFinal,
-    src: r.webSource, dup: r.metaDuplicates, n: r.note, h: r.hoursToDepart,
+    src: r.webSource, dup: r.metaDuplicates, n: r.note, h: r.hoursToDepart, mc: r.metaClass, wcl: r.webClasses, bd: packBreakdown(r.breakdown), jh: r.jsonHref,
   }));
   // Thoát "<" để chuỗi "</script>" trong dữ liệu không đóng thẻ.
   const json = JSON.stringify({ labels, rows: data }).replace(/</g, "\\u003c");
@@ -84,9 +116,22 @@ export const detailViewCss = `
   .dv .grid { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 4px 18px; font-size: 13px; max-width: 820px; }
   .dv .grid .h { font-weight: 600; color: #6b7280; font-size: 12px; }
   .dv .levels { display: flex; flex-wrap: wrap; gap: 4px; }
+  .dv .cls { color: #0f766e; font-size: 11px; font-weight: 600; }
+  .dv .levels span i { font-style: normal; color: #0f766e; font-size: 11px; }
   .dv .levels span { background: #fff; border: 1px solid #e3e5e8; border-radius: 4px; padding: 0 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
   .dv .levels span.hit { border-color: #16a34a; background: #dcfce7; }
   .dv .notes { margin-top: 8px; font-size: 12px; color: #4b5563; }
+  .dv details.api { margin-top: 10px; } .dv details.api summary { font-size: 12px; font-weight: 600; color: #2563eb; cursor: pointer; }
+  .dv .api-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .dv .api-side { background: #fff; border: 1px solid #e3e5e8; border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .dv .api-title { font-weight: 700; font-size: 12px; color: #374151; margin-bottom: 4px; }
+  .dv .api-inv { margin-bottom: 8px; } .dv .api-h { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .dv table.api-t { width: auto; font-size: 12px; border-collapse: collapse; }
+  .dv table.api-t th, .dv table.api-t td { padding: 2px 8px; border-bottom: 1px solid #f0f2f5; background: transparent; }
+  .dv table.api-t th { font-weight: 600; color: #6b7280; } .dv table.api-t td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .dv .api-f { margin-top: 6px; font: 12px/1.6 ui-monospace, Consolas, monospace; background: #f8fafc; border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; }
+  .dv .api-legend { margin-top: 6px; line-height: 1.5; }
+  @media (max-width: 900px) { .dv .api-grid { grid-template-columns: 1fr; } }
   .dv-pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 8px; font-size: 12px; color: #6b7280; }
   .dv-pager button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid #d0d4da; background: #fff; border-radius: 6px; cursor: pointer; }
   .dv-pager button:disabled { opacity: .4; cursor: default; }
@@ -204,24 +249,64 @@ export const detailViewScript = `<script>
       if (r.mf != null && r.wf != null && r.mf !== r.wf) return '<span class="fee-bad">' + short(r.mf) + " ≠ " + short(r.wf) + "</span>";
       return '<span class="fee-ok">' + short(r.mf != null ? r.mf : r.wf) + "</span>";
     };
-    const levels = (list, hit) => '<div class="levels">' + (list || []).map((p) => '<span class="' + (p === hit ? "hit" : "") + '">' + money(p) + "</span>").join("") + "</div>";
+    // Hạng ghế của 1 giá web (v2), VD "Eco · A".
+    const cls = (r, p) => (r.wcl && r.wcl[String(p)]) || "";
+    const levels = (list, hit, r) => '<div class="levels">' + (list || []).map((p) => '<span class="' + (p === hit ? "hit" : "") + '">' + money(p) +
+      (r && cls(r, p) ? ' <i>' + esc(cls(r, p)) + "</i>" : "") + "</span>").join("") + "</div>";
+    // Dữ liệu API (v2): mỗi bên 1 cột — từng chiều: fare/tax/fee/total 1 người theo loại khách, totalAmount,
+    // phí markup (fees) và các bước ra giá so sánh.
+    const PAX = [["adt", "Người lớn"], ["chd", "Trẻ em"], ["inf", "Em bé"]];
+    // Giải nén packBreakdown().
+    const unpackPax = (p) => (p ? { n: p[0], fare: p[1], tax: p[2], fee: p[3], total: p[4] } : null);
+    const unpackSide = (s) => s ? {
+      invs: s[0].map((i) => ({ dir: i[0], flight: i[1], cls: i[2], totalAmount: i[3], adt: unpackPax(i[4]), chd: unpackPax(i[5]), inf: unpackPax(i[6]) })),
+      fees: s[1].map((f) => ({ dir: f[0], paxType: f[1], amount: f[2] })),
+      formula: s[2],
+    } : null;
+    const API_LEGEND = '<div class="muted api-legend">META: totalAmount API đã trừ voucher và đã gồm phí markup (cộng vào tax/total của người lớn, trẻ em; em bé không tính phí, không trừ voucher) → cộng lại voucher để so với web. ' +
+      "COMBINED / combo: giá cả chuyến nằm ở chiều đầu. WEB: giá vé (GALILEO = totalAmount; hãng khác = số khách × total / người) + phí markup theo công thức (combo: × số chiều; 2 chặng lẻ: mỗi chiều phí của chính nó). " +
+      "fare / tax / fee / total là giá 1 người API trả.</div>";
+    const unpack = (bd) => (bd ? { meta: unpackSide(bd[0]), web: unpackSide(bd[1]) } : null);
+    const invTable = (inv) => {
+      const rows = PAX.filter(([k]) => inv[k] && inv[k].n > 0).map(([k, label]) => {
+        const p = inv[k];
+        return "<tr><td>" + label + "</td><td class='n'>" + p.n + "</td><td class='n'>" + money(p.fare) + "</td><td class='n'>" + money(p.tax) +
+          "</td><td class='n'>" + money(p.fee) + "</td><td class='n'><b>" + money(p.total) + "</b></td><td class='n'>" +
+          (typeof p.total === "number" ? money(p.total * p.n) : "—") + "</td></tr>";
+      }).join("");
+      return '<div class="api-inv"><div class="api-h">' + (inv.dir ? "Về" : "Đi") + " " + esc(inv.flight) + (inv.cls ? ' <span class="cls">' + esc(inv.cls) + "</span>" : "") + "</div>" +
+        '<table class="api-t"><thead><tr><th></th><th>SL</th><th>fare</th><th>tax</th><th>fee</th><th>total / người</th><th>× SL</th></tr></thead><tbody>' + rows +
+        "</tbody></table><div class='muted'>totalAmount của chiều: <b>" + money(inv.totalAmount) + "</b></div></div>";
+    };
+    const side = (title, s) => {
+      if (!s) return '<div class="api-side"><div class="api-title">' + title + '</div><div class="muted">Không có dữ liệu</div></div>';
+      const fees = s.fees.length
+        ? s.fees.map((f) => (f.dir === null ? "" : f.dir ? "về " : "đi ") + esc(f.paxType) + " " + money(f.amount)).join(" · ")
+        : "không có";
+      return '<div class="api-side"><div class="api-title">' + title + "</div>" + s.invs.map(invTable).join("") +
+        '<div class="muted">Phí markup (fees): ' + fees + "</div>" +
+        '<div class="api-f">' + s.formula.map(esc).join("<br>") + "</div></div>";
+    };
+    const apiData = (packed) => { const bd = unpack(packed); return bd ? '<details class="api" open><summary>Dữ liệu API — số từ đâu ra</summary><div class="api-grid">' + side("META", bd.meta) + side("WEB", bd.web) + "</div>" + API_LEGEND + "</details>" : ""; };
+
     const detail = (r) => {
       const metaLines = [];
-      if (r.mb != null) metaLines.push("<b>" + money(r.mb) + "</b>");
+      if (r.mb != null) metaLines.push("<b>" + money(r.mb) + "</b>" + (r.mc ? ' <span class="cls">' + esc(r.mc) + "</span>" : ""));
       if (r.vd) metaLines.push('<div class="muted">API trả ' + money(r.mp) + " + voucher " + esc(r.vc) + " " + money(r.vd) + "</div>");
       // Combo: mỗi chiều mang giá cả chuyến → không tách đi/về.
       if (r.ml && r.ml.length > 1 && r.src !== "combo") metaLines.push('<div class="muted">đi ' + money(r.ml[0]) + " · về " + money(r.ml[1]) + (r.vd ? " (đã trừ voucher)" : "") + "</div>");
       const webLines = [];
-      if (r.wc != null) webLines.push("<b>" + money(r.wc) + "</b>");
-      if (r.wp && r.wp.length > 1) webLines.push('<div class="muted">các mức hạng vé:</div>' + levels(r.wp, r.mb));
+      if (r.wc != null) webLines.push("<b>" + money(r.wc) + "</b>" + (cls(r, r.wc) ? ' <span class="cls">' + esc(cls(r, r.wc)) + "</span>" : ""));
+      if (r.wp && r.wp.length > 1) webLines.push('<div class="muted">các mức hạng vé:</div>' + levels(r.wp, r.mb, r));
       (r.wl || []).forEach((p, i) => p.length && webLines.push('<div class="muted">' + (i ? "về" : "đi") + ":</div>" + levels(p, r.ml ? r.ml[i] : null)));
+      const jsonLink = r.jh ? '<div class="notes"><a href="' + esc(r.jh) + '" target="_blank">JSON hành trình này</a> <span class="muted">(nguyên item API meta + web, kết quả so)</span></div>' : "";
       const notes = [typeof r.h === "number" && (r.h < 0 ? "Đã qua giờ bay " + Math.abs(r.h).toFixed(1) + "h lúc search" : "Cất cánh sau " + r.h.toFixed(1) + "h kể từ lúc search"), r.dl && "Chặng lệch: " + r.dl, r.src && "Nguồn web: " + r.src, r.dup > 1 && r.dup + " offer meta trùng", r.n].filter(Boolean);
       return '<div class="grid">' +
         '<div class="h"></div><div class="h">META</div><div class="h">WEB</div>' +
         "<div>" + esc(labels.metaPrice.replace(" META", "")) + "</div><div>" + (metaLines.join("") || "—") + "</div><div>" + (webLines.join("") || "—") + "</div>" +
         "<div>" + esc(labels.fee) + "</div><div>" + money(r.mf) + "</div><div>" + money(r.wf) + "</div>" +
         "<div>" + esc(labels.final) + "</div><div><b>" + money(r.mt) + "</b></div><div><b>" + money(r.wt) + "</b></div>" +
-        "</div>" + (notes.length ? '<div class="notes">' + notes.map(esc).join(" · ") + "</div>" : "");
+        "</div>" + (notes.length ? '<div class="notes">' + notes.map(esc).join(" · ") + "</div>" : "") + jsonLink + apiData(r.bd);
     };
 
     const tbody = $("tbody"), pager = $(".dv-pager");
@@ -252,8 +337,8 @@ export const detailViewScript = `<script>
           '<td><span class="tag ' + (TAG[r.s] || "") + '">' + esc(r.s) + "</span></td>" +
           "<td>" + esc(r.sy) + (r.al && r.al !== r.sy ? ' <span class="muted">' + esc(r.al) + "</span>" : "") + "</td>" +
           '<td class="it">' + r.lg.map((l, k) => (k ? legLine(l) : legLine(l).replace("</span></div>", "</span>" + nearTag(r) + "</div>"))).join("") + "</td>" +
-          '<td class="num">' + (r.mb != null ? money(r.mb) : "—") + (r.vd ? '<div class="muted">voucher −' + short(r.vd) + "</div>" : "") + "</td>" +
-          '<td class="num">' + (r.wc != null ? money(r.wc) : "—") + (r.wp && r.wp.length > 1 ? '<div class="muted">' + r.wp.length + " mức</div>" : "") + "</td>" +
+          '<td class="num">' + (r.mb != null ? money(r.mb) : "—") + (r.mc ? '<div class="cls">' + esc(r.mc) + "</div>" : "") + (r.vd ? '<div class="muted">voucher −' + short(r.vd) + "</div>" : "") + "</td>" +
+          '<td class="num">' + (r.wc != null ? money(r.wc) : "—") + (cls(r, r.wc) ? '<div class="cls">' + esc(cls(r, r.wc)) + "</div>" : "") + (r.wp && r.wp.length > 1 ? '<div class="muted">' + r.wp.length + " mức</div>" : "") + "</td>" +
           '<td class="num">' + diff + "</td>" +
           '<td class="num">' + feeCell(r) + "</td></tr>" +
           (open ? '<tr class="detail"><td colspan="8">' + detail(r) + "</td></tr>" : "");
