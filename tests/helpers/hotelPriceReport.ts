@@ -163,7 +163,32 @@ function renderPolicy(label: string, info: SystemSearchInfo): string {
   }${warn}${err}</div>`;
 }
 
-function renderCondition(c: HotelCondition): string {
+export type RunOptions = { hotels: number; noDetail: boolean };
+
+/**
+ * Lệnh chạy lại đúng điều kiện này 1 lần: cùng case, địa điểm (từ khoá đã search), ngày nhận phòng,
+ * số đêm, phòng, khách, tuổi trẻ em, số khách sạn. Giá là giá sống nên kết quả có thể khác lần trước.
+ */
+export function rerunCommand(c: HotelCondition, opts: RunOptions): string {
+  const caseId = c.id.replace(/^cond-\d+-/, "");
+  return [
+    "yarn hotel:price --count 1",
+    `--case ${caseId}`,
+    `--loc "${c.location.term.replace(/"/g, "")}"`,
+    `--in ${c.checkIn}`,
+    `--nights ${c.nights}`,
+    `--rooms ${c.rooms}`,
+    `--adt ${c.adults}`,
+    `--chd ${c.children}`,
+    c.children ? `--ages ${c.childrenAges.join(",")}` : "",
+    `--hotels ${opts.hotels}`,
+    opts.noDetail ? "--no-detail" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function renderCondition(c: HotelCondition, opts: RunOptions): string {
   const guests = `${c.rooms} phòng · ${c.adults} NL${c.children ? ` · ${c.children} TE (${c.childrenAges.join(", ")} tuổi)` : ""}`;
   const loc = `${esc(c.location.name ?? c.location.term)}${c.location.id ? ` <span class="muted">#${c.location.id} ${esc(c.location.searchType ?? "")}${c.location.isDomestic === false ? " · quốc tế" : c.location.isDomestic ? " · nội địa" : ""}</span>` : ""}`;
   const hotels = c.hotels
@@ -175,7 +200,9 @@ function renderCondition(c: HotelCondition): string {
     .join("");
   return `<article class="cond" id="${esc(c.id)}"><h2>${esc(c.id)} · ${loc}</h2><div class="meta">${esc(c.description)} — ${c.checkIn} → ${c.checkOut} (${c.nights} đêm) · ${guests} · search lúc ${esc(
     c.searchedAt
-  )}</div>${c.error ? `<div class="warn">⚠ ${esc(c.error)}</div>` : ""}${renderPolicy("WEB", c.web)}${renderPolicy("TMS", c.tms)}${hotels}</article>`;
+  )}</div><div class="rerun"><span class="muted">Chạy lại điều kiện này:</span> <code>${esc(rerunCommand(c, opts))}</code> <button type="button" class="copy">Copy</button></div>${
+    c.error ? `<div class="warn">⚠ ${esc(c.error)}</div>` : ""
+  }${renderPolicy("WEB", c.web)}${renderPolicy("TMS", c.tms)}${hotels}</article>`;
 }
 
 const CSS = `
@@ -200,16 +227,22 @@ table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0}td,th{bord
 .rooms td:nth-child(3),.rooms th:nth-child(3){text-align:right}.rooms tr.pick{background:var(--pick)}
 .tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px}
 details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}
+.rerun{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 8px;font-size:12px}
+.rerun code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:2px 6px;overflow-wrap:anywhere;user-select:all}
+.copy{font:inherit;font-size:12px;padding:2px 10px;border:1px solid var(--line);border-radius:4px;background:var(--card);color:var(--accent);cursor:pointer}
 `;
 
+/** Nút Copy cạnh lệnh chạy lại (dùng chung cho report.html và trang tổng quan). */
+export const COPY_SCRIPT = `<script>document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".copy");if(!b)return;var t=b.parentNode.querySelector("code").textContent;function done(){b.textContent="Đã copy";setTimeout(function(){b.textContent="Copy"},1500)}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,fallback)}else fallback();function fallback(){var r=document.createRange();r.selectNodeContents(b.parentNode.querySelector("code"));var s=getSelection();s.removeAllRanges();s.addRange(r);try{document.execCommand("copy");done()}catch(_){b.textContent="Ctrl+C"}}})</script>`;
+
 /** Ghi report.html + summary.csv + raw.json vào thư mục kết quả, trả đường dẫn report.html. */
-export function writeHotelPriceReport(outDir: string, conditions: HotelCondition[], meta: { startedAt: string; apiUrl: string }): string {
+export function writeHotelPriceReport(outDir: string, conditions: HotelCondition[], meta: { startedAt: string; apiUrl: string } & RunOptions): string {
   fs.mkdirSync(outDir, { recursive: true });
   const nav = conditions.map((c) => `<a href="#${esc(c.id)}">${esc(c.id)} ${esc(c.location.name ?? c.location.term)} (${c.hotels.length})</a>`).join("");
   const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Giá khách sạn</title><style>${CSS}</style></head><body>
 <h1>Giá khách sạn — web vs TMS (chỉ hiển thị, không so sánh)</h1>
 <div class="meta">Chạy lúc ${esc(meta.startedAt)} · API ${esc(meta.apiUrl)} · ${conditions.length} điều kiện. Mỗi khách sạn: giá gốc API trả → từng bước FE cộng markup → giá hiển thị. Công thức xem tests/hotel-price/README.md.</div>
-<nav>${nav}</nav>${conditions.map(renderCondition).join("")}</body></html>`;
+<nav>${nav}</nav>${conditions.map((c) => renderCondition(c, meta)).join("")}${COPY_SCRIPT}</body></html>`;
   const file = path.join(outDir, "report.html");
   fs.writeFileSync(file, html, "utf-8");
 
@@ -254,6 +287,7 @@ export function writeHotelPriceReport(outDir: string, conditions: HotelCondition
     hotels: c.hotels.length,
     listDetailGaps: c.hotels.filter((h) => h.web && listDetailGap(h.web.record, h.web.detail?.room)).length,
     detailErrors: c.hotels.filter((h) => h.web?.detail?.error || h.tms?.detail?.error).length,
+    rerun: rerunCommand(c, meta),
   }));
   fs.writeFileSync(path.join(outDir, "overview.json"), JSON.stringify({ startedAt: meta.startedAt, apiUrl: meta.apiUrl, conditions: overview }, null, 2), "utf-8");
   return file;

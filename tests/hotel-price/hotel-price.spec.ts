@@ -19,7 +19,7 @@ import {
   type HotelRecord,
   type MarkupContext,
 } from "../helpers/hotelPricing";
-import { listDetailGap, writeHotelPriceReport, type HotelCondition, type HotelRow, type SystemHotelCalc, type SystemSearchInfo } from "../helpers/hotelPriceReport";
+import { listDetailGap, rerunCommand, writeHotelPriceReport, type HotelCondition, type HotelRow, type SystemHotelCalc, type SystemSearchInfo } from "../helpers/hotelPriceReport";
 
 /**
  * Hiển thị giá khách sạn theo công thức của WEB (traveleasy-web-user) và TMS (tms_user) — KHÔNG so sánh,
@@ -289,11 +289,17 @@ test.describe("Giá khách sạn — web vs TMS (chỉ hiển thị)", () => {
         const detailError = h.web?.detail?.error ?? h.tms?.detail?.error;
         if (detailError) console.log(`      ⚠ detail: ${detailError}`);
       }
+      console.log(`  ↻ Chạy lại: ${rerunCommand(condition, { hotels: HOTELS, noDetail: !FETCH_DETAIL })}`);
     }
 
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, "raw.json"), JSON.stringify({ conditions: conditions.map((c) => ({ ...c, hotels: undefined })), responses: raw }, null, 2), "utf-8");
-    const report = writeHotelPriceReport(outDir, conditions, { startedAt: startedAt.toLocaleString("vi-VN"), apiUrl: API_URL });
+    const report = writeHotelPriceReport(outDir, conditions, {
+      startedAt: startedAt.toLocaleString("vi-VN"),
+      apiUrl: API_URL,
+      hotels: HOTELS,
+      noDetail: !FETCH_DETAIL,
+    });
     console.log(`\n📄 Báo cáo: ${report}`);
   });
 });

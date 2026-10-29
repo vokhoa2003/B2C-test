@@ -22,6 +22,14 @@ yarn hotel:price:reports latest            # mở báo cáo mới nhất (hoặc
 yarn hotel:price:reports --find "Da Nang"  # lọc theo địa điểm / case
 ```
 
+Mỗi điều kiện có lệnh **chạy lại đúng điều kiện đó** (case, địa điểm, ngày, số đêm, phòng, khách, tuổi trẻ em, số KS), kèm nút Copy. Lệnh này có trong `report.html`, trang tổng quan, console lúc chạy và danh sách `hotel:price:reports`. Ví dụ:
+
+```bash
+yarn hotel:price --count 1 --case H-04 --loc "Hội An" --in 2026-11-23 --nights 2 --rooms 1 --adt 2 --chd 1 --ages 6 --hotels 10
+```
+
+Giá là giá sống, nên chạy lại có thể ra kết quả khác lần trước. Ngày nhận phòng đã qua thì API không trả khách sạn.
+
 Trang tổng quan: mỗi lần chạy là 1 bảng các điều kiện, gồm địa điểm, ngày, số phòng/khách, số khách sạn, thời gian search, policy web/TMS. Hàng vàng là có cảnh báo (giá list ≠ detail, lỗi detail, cảnh báo policy). Hàng đỏ là lỗi hoặc 0 khách sạn.
 
 ## Token

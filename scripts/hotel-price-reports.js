@@ -74,7 +74,9 @@ function writeIndex(runs) {
       const conds = run.conditions
         .map((c) => {
           const s = condState(c);
-          return `<tr class="${s.cls}"><td>${esc(c.id)}</td><td>${esc(c.location)}${c.isDomestic === false ? ' <span class="tag">QT</span>' : ""}</td><td>${esc(c.checkIn)} · ${c.nights} đêm</td><td>${esc(guests(c))}</td><td class="n">${c.webCount ?? "—"}</td><td class="n">${secs(c.webMs)}</td><td>${esc(c.webPolicy ?? "—")}</td><td>${c.tmsUsesWebData ? '<span class="muted">chung token WEB</span>' : `${c.tmsCount ?? "—"} KS · ${esc(c.tmsPolicy ?? "—")}`}</td><td>${esc(s.text)}</td></tr>`;
+          return `<tr class="${s.cls}"><td>${esc(c.id)}</td><td>${esc(c.location)}${c.isDomestic === false ? ' <span class="tag">QT</span>' : ""}</td><td>${esc(c.checkIn)} · ${c.nights} đêm</td><td>${esc(guests(c))}</td><td class="n">${c.webCount ?? "—"}</td><td class="n">${secs(c.webMs)}</td><td>${esc(c.webPolicy ?? "—")}</td><td>${c.tmsUsesWebData ? '<span class="muted">chung token WEB</span>' : `${c.tmsCount ?? "—"} KS · ${esc(c.tmsPolicy ?? "—")}`}</td><td>${esc(s.text)}</td></tr>${
+            c.rerun ? `<tr class="rerun-row"><td></td><td colspan="8"><div class="rerun"><span class="muted">↻</span> <code>${esc(c.rerun)}</code> <button type="button" class="copy">Copy</button></div></td></tr>` : ""
+          }`;
         })
         .join("");
       const link = run.report ? `<a href="${esc(path.relative(ROOT, run.report).replace(/\\/g, "/"))}">Mở báo cáo</a>` : '<span class="muted">không có report.html</span>';
@@ -91,8 +93,12 @@ input{width:100%;max-width:420px;padding:6px 10px;margin:10px 0;border:1px solid
 .run{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:12px 0;overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:13px}td,th{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}.n{text-align:right;white-space:nowrap}
 tr.warn{background:var(--warn)}tr.fail{background:var(--fail)}.tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+tr.rerun-row td{border-top:0;padding-top:0}.rerun{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px}
+.rerun code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 6px;overflow-wrap:anywhere;user-select:all}
+.copy{font:inherit;font-size:12px;padding:1px 10px;border:1px solid var(--line);border-radius:4px;background:var(--card);color:var(--accent);cursor:pointer}
 </style></head><body><h1>Giá khách sạn — tổng quan các lần chạy</h1><div class="muted">${runs.length} lần chạy · ${totalHotels} khách sạn · hàng vàng = có cảnh báo, hàng đỏ = lỗi / 0 khách sạn</div>
 <input id="q" placeholder="Lọc theo địa điểm, case, ngày…"><div id="runs">${rows || '<p class="muted">Chưa có lần chạy nào — chạy yarn hotel:price</p>'}</div>
+<script>document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".copy");if(!b)return;var c=b.parentNode.querySelector("code");function done(){b.textContent="Đã copy";setTimeout(function(){b.textContent="Copy"},1500)}function fallback(){var r=document.createRange();r.selectNodeContents(c);var s=getSelection();s.removeAllRanges();s.addRange(r);try{document.execCommand("copy");done()}catch(_){b.textContent="Ctrl+C"}}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(c.textContent).then(done,fallback)}else fallback()})</script>
 <script>document.getElementById("q").addEventListener("input",function(e){var v=e.target.value.toLowerCase();document.querySelectorAll(".run").forEach(function(s){s.style.display=s.dataset.search.indexOf(v)>=0?"":"none"})})</script></body></html>`;
   fs.mkdirSync(ROOT, { recursive: true });
   fs.writeFileSync(INDEX_FILE, html, "utf-8");
@@ -141,6 +147,7 @@ for (const run of runs.slice(0, limit)) {
   for (const c of run.conditions) {
     const s = condState(c);
     console.log(`     ${c.id.padEnd(12)} ${String(c.location).padEnd(18)} ${c.checkIn} ${c.nights}đ ${guests(c).padEnd(10)} ${String(c.webCount ?? "—").padStart(3)} KS${s.text ? `  ${s.cls === "fail" ? "✗" : "⚠"} ${s.text}` : ""}`);
+    if (c.rerun) console.log(`       ↻ ${c.rerun}`);
   }
 }
 console.log(`\nTrang tổng quan: ${INDEX_FILE}${openIndex ? "" : "  (mở: yarn hotel:price:reports --open)"}`);
