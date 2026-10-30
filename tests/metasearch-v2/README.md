@@ -99,6 +99,34 @@ yarn compare:metasearch:v2 --count 40                          # chạy hết 40
 
 Đặt `WEB_API_TOKEN` trong `.env` để tool gọi thẳng API web thay vì bắt qua browser (browser không đọc được response lớn như GALILEO_NDC ~10 MB) — cách lấy token xem [v1 mục 1](../metasearch/README.md#1-chuẩn-bị). Áp dụng cho cả v1 lẫn v2.
 
+## Bước đặt chỗ
+
+Sau khi so meta/web, tool mở deeplink của item meta trên web test, đợi kết quả rồi ghi lại trang có chuyển thành công không. Bước này chỉ gọi link: không so giá, không điền hành khách, không tạo đơn.
+
+| Kết quả | Ý nghĩa |
+|---|---|
+| `OK` | API booking trả thành công, trang đặt chỗ hiện ra |
+| `GIÁ ĐỔI` | Backend báo đổi giá (`errorCode` 20001), có giá cũ/mới |
+| `HẾT CHUYẾN` | Backend báo offer không còn (404) |
+| `LỖI` | API lỗi khác hoặc trang không load xong, có ảnh và body lỗi |
+| `HẾT PHIÊN` | Phiên search đã hết, tool tự search lại và mở tiếp; chỉ còn lại nếu không mở được item nào |
+| `KHÔNG CÒN TRONG SEARCH` | Lần search lại không trả item đó |
+
+- Web hiện chung 1 popup cho mọi lỗi, nên tool phân loại theo response API và ghi thêm nội dung popup.
+- Phiên deeplink rất ngắn, nên bước này tự search meta lại ngay trước khi mở.
+- Deeplink meta trỏ tới production; tool luôn đổi host sang web test và chặn request tới production. Click ghi vào `meta_search` của dev với `utm_campaign=auto-test`.
+- **Mỗi item = 1 lần backend search lại vendor**, nên mặc định chỉ mở 20 item / điều kiện, chia đều theo system.
+- Mỗi item được chụp màn hình trang deeplink trỏ tới (`booking/cond-N/*.jpg`, trừ item chưa mở được vì hết phiên).
+- Kết quả: trang riêng `booking-report.html` (ảnh từng item, lọc theo kết quả); cột "Đặt chỗ" trong `report.html`; dữ liệu ở `booking/cond-N.json`.
+
+```bash
+yarn compare:metasearch:v2 --booking-limit 50          # số item mỗi điều kiện
+yarn compare:metasearch:v2 --booking-limit all         # mọi item
+yarn compare:metasearch:v2 --booking-concurrency 1     # số luồng (mặc định 3)
+yarn compare:metasearch:v2 --no-booking                # bỏ bước này
+yarn compare:metasearch:v2:reports latest --booking    # mở báo cáo đặt chỗ lần mới nhất
+```
+
 ## Lệnh
 
 Cờ y hệt v1 (`--from/--to/--depart/--return`, `--trip`, `--route`, `--adt/--chd/--inf`, `--airline`, `--count`, `--repeat`, `--review`…):
@@ -122,6 +150,7 @@ yarn compare:metasearch:v2:clear                                    # xoá lịc
 | `tests/helpers/metasearchCompareV2.ts` | Ghép hành trình + **công thức giá v2** + cảnh báo |
 | `tests/helpers/metasearchReportV2.ts` | Báo cáo `report.html` / CSV / trang metaSearch v2 |
 | `tests/helpers/metasearchHistoryV2.ts` | Lịch sử riêng v2 |
+| `tests/helpers/metasearchBookingCheck.ts` | Bước đặt chỗ: mở deeplink từng item, ghi kết quả |
 | `tests/helpers/airportCatalog.ts` | Đọc danh mục sân bay `public/PLAN/airports.json`: lọc, nhóm vùng, nhãn thành phố/quốc gia |
 | `scripts/compare-metasearch-v2.js`, `scripts/metasearch-reports-v2.js` | Lệnh chạy / xem báo cáo v2 |
 

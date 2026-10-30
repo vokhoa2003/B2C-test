@@ -26,6 +26,7 @@ const { spawnSync } = require("child_process");
 const HISTORY_FILE = path.join(__dirname, "..", ".test-state", "metasearch-compare-v2", "history.json");
 const USAGE = [
   "Dùng: --trip oneway|roundtrip|all  --route domestic|international|all  --count N  --case PAX-09,ROUTE  --24h  --no-recheck  --dry-run  --repeat  --review  --clear-history  --headed  --ui",
+  "Đặt chỗ: --booking-limit N|all (mặc định 20 item / điều kiện)  --booking-concurrency N (mặc định 3)  --no-booking",
   "Chỉ định hành trình: --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD|today|tomorrow|+N] [--return …]",
   "Số khách / hãng (dùng kèm mọi chế độ): --adt N --chd N --inf N (em bé ≤ người lớn, tổng ≤ 9)  --airline VNA (hoặc VN,VJ)",
 ].join("\n");
@@ -46,6 +47,9 @@ const FLAGS = {
   count: { env: "META_CONDITIONS", check: (v) => Number(v) > 0, hint: "phải là số > 0" },
   // Chỉ chạy case study theo mã/tiền tố trong metasearch-vs-web-v2.json, VD --case PAX-09,ROUTE  (nhiều: dấu phẩy)
   case: { env: "META_CASES", upper: true, check: (v) => /^[A-Z0-9-]+(,[A-Z0-9-]+)*$/.test(v), hint: "mã case, VD PAX-09 hoặc ROUTE (nhiều: dấu phẩy)" },
+  // Bước đặt chỗ: số item mở mỗi điều kiện (all = mọi item) và số luồng. Mỗi item = 1 lần backend search lại vendor.
+  "booking-limit": { env: "META_BOOKING_LIMIT", check: (v) => v === "all" || Number(v) > 0, hint: "số > 0 hoặc all" },
+  "booking-concurrency": { env: "META_BOOKING_CONCURRENCY", check: (v) => /^[1-9]$/.test(v), hint: "số 1–9" },
   // Chỉ định 1 hành trình cụ thể (bỏ qua templates/lịch sử, chạy đúng 1 điều kiện).
   from: { env: "META_FROM", upper: true, check: (v) => /^[A-Z]{3}$/.test(v), hint: "mã sân bay 3 chữ, VD SGN" },
   to: { env: "META_TO", upper: true, check: (v) => /^[A-Z]{3}$/.test(v), hint: "mã sân bay 3 chữ, VD HAN" },
@@ -108,11 +112,15 @@ for (let i = 0; i < args.length; i++) {
     env.META_RECHECK = "0";
     continue;
   }
+  if (arg === "--no-booking") {
+    env.META_BOOKING = "0";
+    continue;
+  }
   if (arg === "--dry-run") {
     env.META_DRY_RUN = "1";
     continue;
   }
-  const match = arg.match(/^--(\w+)(?:=(.*))?$/);
+  const match = arg.match(/^--([\w-]+)(?:=(.*))?$/);
   const flag = match && FLAGS[match[1]];
   if (!flag) {
     console.error(`Cờ không hợp lệ: ${arg}\n${USAGE}`);

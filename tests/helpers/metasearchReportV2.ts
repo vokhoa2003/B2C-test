@@ -1,4 +1,5 @@
 import fs from "fs";
+import { BookingSummary, bookingVerdict } from "./metasearchBookingCheck";
 import path from "path";
 import { CompareResult, DetailRow, FareItem, FareLeg, NEAR_DEPARTURE_HOURS, cabinLabel } from "./metasearchCompareV2";
 import { CapturedSearch } from "../pages/flight/FlightSearchApiCapture";
@@ -70,6 +71,8 @@ export type ConditionReport = {
   diffJson?: { count: number; dir: string; firstRun?: { count: number; dir: string } };
   /** Lệnh yarn chạy lại đúng điều kiện này — hiện ngay trên bảng chi tiết để copy. */
   rerunCommand?: string;
+  /** Kết quả mở deeplink tới trang đặt chỗ (bỏ trống khi --no-booking hoặc meta lỗi). */
+  booking?: BookingSummary;
   result: CompareResult;
 };
 
@@ -204,8 +207,39 @@ export function nearDepartureText(n: CompareResult["nearDeparture"]): string {
  */
 function verdictClass(c: ConditionReport): "ok" | "warn" | "diff" {
   const r = c.result;
-  if (c.verdict.startsWith("KHÔNG SO ĐƯỢC") || r.priceDiffs + r.feeDiffs) return "diff";
-  return r.smallPriceDiffs + r.metaOnly + r.webOnly + (c.firstRun?.priceDiffs ?? 0) ? "warn" : "ok";
+  const b = c.booking;
+  if (c.verdict.startsWith("KHÔNG SO ĐƯỢC") || r.priceDiffs + r.feeDiffs + (b?.priceChanged ?? 0) + (b?.errors ?? 0)) return "diff";
+  return r.smallPriceDiffs + r.metaOnly + r.webOnly + (c.firstRun?.priceDiffs ?? 0) + (b?.offerGone ?? 0) + (b?.expired ?? 0) ? "warn" : "ok";
+}
+
+/** Ô "Đặt chỗ" trong bảng tổng quan. */
+function bookingCell(b: BookingSummary | undefined): string {
+  if (!b) return "—";
+  const bad = b.priceChanged + b.errors;
+  return `<span class="${bad ? "bad" : ""}">${b.ok}/${b.planned}</span><div class="muted">${esc(bookingVerdict(b).replace("đặt chỗ: ", ""))}</div>`;
+}
+
+/** Mục đặt chỗ của 1 điều kiện: chỉ liệt kê item có vấn đề, toàn bộ nằm trong booking/cond-N.json. */
+function bookingSection(c: ConditionReport): string {
+  const b = c.booking;
+  if (!b) return "";
+  const bad = b.rows.filter((r) => r.status !== "OK");
+  const rows = bad
+    .map(
+      (r) => `<tr>
+        <td><span class="tag ${r.status === "GIÁ ĐỔI" || r.status === "LỖI" ? "diff" : "warn"}">${esc(r.status)}</span></td>
+        <td class="mono">${esc(r.system)}</td>
+        <td class="mono">${esc(r.flights)}</td>
+        <td class="num">${fmtPrice(r.metaTotal)}</td>
+        <td class="num">${fmtPrice(r.newTotal)}</td>
+        <td class="num">${r.sinceSearchS}s</td>
+        <td>${esc(r.note)}${r.screenshot ? ` · <a href="booking/${esc(c.id)}/${esc(r.screenshot)}" target="_blank">ảnh</a>` : ""}</td>
+      </tr>`
+    )
+    .join("");
+  return `<h3>Đặt chỗ: mở ${b.planned}/${b.items} item meta</h3>
+    <p class="muted"><a href="booking-report.html" target="_blank">Báo cáo đặt chỗ kèm ảnh</a> · OK ${b.ok}/${b.planned} · ${b.searches} lần search meta · ${secs(b.ms)}${b.notFound ? ` · ${b.notFound} item không còn trong lần search sau` : ""} — toàn bộ: <a href="booking/${esc(c.id)}.json" target="_blank">booking/${esc(c.id)}.json</a></p>
+    ${bad.length ? `<div class="scroll"><table><thead><tr><th>Kết quả</th><th>System</th><th>Chuyến</th><th>Giá meta</th><th>Giá mới</th><th title="Mở sau khi search bao lâu">Sau search</th><th>Ghi chú</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}`;
 }
 
 const secs = (ms?: number) => (ms == null ? "—" : `${(ms / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}s`);
@@ -231,6 +265,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
         <td class="num ${r.webOnly ? "warn-t" : ""}">${r.webOnly}</td>
         <td class="nowrap">META ${secs(c.metaMs)}<br>WEB ${secs(c.webMs)}${c.webSystemMs ? `<div class="muted">${esc(c.webSystemMs)}</div>` : ""}</td>
         <td class="num ${r.nearDeparture?.problems ? "warn-t" : ""}">${r.nearDeparture?.total || ""}${r.nearDeparture?.problems ? `<div class="muted">${r.nearDeparture.problems} lệch/thiếu</div>` : ""}</td>
+        <td class="num">${bookingCell(c.booking)}</td>
         <td><span class="tag ${verdictClass(c)}" style="white-space: normal">${esc(c.verdict)}</span></td>
       </tr>`;
     })
@@ -253,6 +288,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
           ${c.result.warnings.map((w) => `<li class="warn">⚠ ${esc(w)}</li>`).join("")}
         </ul>
         ${c.rerunCommand ? `<pre class="rerun">${esc(c.rerunCommand)}</pre>` : ""}
+        ${bookingSection(c)}
         <h3>Chi tiết từng hành trình (${c.result.rows.length})</h3>
         ${detailView(c.id, c.result.rows, DETAIL_LABELS)}
       </section>`;
@@ -299,7 +335,7 @@ export function writeHtmlReport(filePath: string, conditions: ConditionReport[],
   <section>
     <h2>Tổng quan</h2>
     <div class="scroll"><table>
-      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th title="Thời gian phản hồi của 2 bên (web: từng system gọi song song)">Phản hồi</th><th title="Hành trình cất cánh trong 24h kể từ lúc search">Bay trong 24h</th><th>Kết luận</th></tr></thead>
+      <thead><tr><th>#</th><th>Điều kiện</th><th>Route</th><th>Ngày</th><th>Khách</th><th>Hành trình meta</th><th>Kết quả web</th><th>Khớp</th><th>Lệch giá</th><th>Lệch giá dưới 1k</th><th>Lệch phí</th><th>Có voucher meta</th><th>Chỉ có ở meta</th><th>Chỉ có ở web</th><th title="Thời gian phản hồi của 2 bên (web: từng system gọi song song)">Phản hồi</th><th title="Hành trình cất cánh trong 24h kể từ lúc search">Bay trong 24h</th><th title="Số item chuyển được sang trang đặt chỗ / số item đã kiểm">Đặt chỗ</th><th>Kết luận</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table></div>
   </section>

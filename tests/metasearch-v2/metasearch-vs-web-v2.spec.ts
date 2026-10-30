@@ -21,6 +21,8 @@ import {
   knownRegions,
 } from "../helpers/airportCatalog";
 import { appendHistory, historyKey, loadHistory, HISTORY_FILE } from "../helpers/metasearchHistoryV2";
+import { BookingSummary, assertTestWeb, bookingVerdict, runBookingCheck } from "../helpers/metasearchBookingCheck";
+import { writeBookingReport } from "../helpers/metasearchBookingReport";
 import {
   ConditionReport,
   FirstRunInfo,
@@ -315,6 +317,15 @@ const matchesAirline = (item: FareItem) =>
   (item.flights ?? []).every((leg) => (leg.segments ?? []).every((seg) => AIRLINE_FILTER.includes(String(seg.airline).toUpperCase())));
 
 const WEB_URL = (process.env.META_COMPARE_WEB_URL || "https://dev.triphubs.vn").replace(/\/+$/, "");
+/**
+ * Bước đặt chỗ (helpers/metasearchBookingCheck.ts): mỗi item = 1 lần backend search lại vendor, nên mặc định chỉ kiểm
+ * BOOKING_LIMIT item / điều kiện, chia đều theo system. Cờ --booking-limit N|all, --booking-concurrency N, --no-booking.
+ */
+const BOOKING_ENABLED = process.env.META_BOOKING !== "0";
+const BOOKING_LIMIT = process.env.META_BOOKING_LIMIT === "all" ? null : Number(process.env.META_BOOKING_LIMIT) || 20;
+const BOOKING_CONCURRENCY = Number(process.env.META_BOOKING_CONCURRENCY) || 3;
+/** Thời gian dự trù cho 1 item (gồm cả search lại vendor), để nới timeout của test. */
+const BOOKING_ITEM_MS = 60_000;
 const META_API_URL = (process.env.META_API_URL || "https://api-dev.triphubs.vn").replace(/\/+$/, "");
 // Lấy dữ liệu web bằng cách gọi thẳng API (helpers/webSearchClient.ts) khi có WEB_API_TOKEN, hoặc có
 // WEB_API_CLIENT_ID / WEB_API_USERNAME / WEB_API_PASSWORD để tự đăng nhập lấy token; không có → bắt qua browser.
@@ -545,7 +556,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
   // Đây là tool thu thập/so sánh số liệu: chạy 1 lần, không retry (mỗi lần chạy = 5 search thật/bên).
   test.describe.configure({ retries: 0 });
 
-  test(`search ${CONDITIONS_PER_RUN} điều kiện trên 2 trang và so sánh`, async ({ page, request }, testInfo) => {
+  test(`search ${CONDITIONS_PER_RUN} điều kiện trên 2 trang và so sánh`, async ({ page, request, browser }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Chỉ cần chạy 1 browser");
     const clientId = process.env.META_CLIENT_ID;
     const username = process.env.META_USERNAME;
@@ -581,6 +592,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
 
     // Token đặt sẵn được ưu tiên; không có thì đăng nhập như web (lỗi đăng nhập → dừng luôn, báo rõ lý do) — làm
     // TRƯỚC khi tạo thư mục báo cáo để lỗi đăng nhập không để lại báo cáo rỗng.
+    if (BOOKING_ENABLED) assertTestWeb(WEB_URL);
     const webToken = WEB_API_TOKEN || (WEB_API_CREDENTIALS ? await loginWebApi(request, WEB_API_URL, WEB_API_CREDENTIALS) : "");
     const startedAt = new Date();
     const runDir = createRunDir();
@@ -589,6 +601,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
       "webStatus", "metaStatus", "webMs", "metaMs", "webRawItems", "metaRawItems",
       "metaOffers", "matched", "priceDiffs", "smallPriceDiffs", "feeDiffs", "withVoucher", "metaOnly", "webOnly",
       "searchedAt", "within24h", "within24hProblems", "metaDeeplinkRoute", "verdict", "webUrl", "webSystemMs", "firstRunPriceDiffs", "firstRunCleared",
+      "bookingPlanned", "bookingOk", "bookingPriceChanged", "bookingOfferGone", "bookingErrors", "bookingExpired",
     ]);
     const detailsCsv = new CsvFile<Record<string, unknown>>(path.join(runDir, "details.csv"), [...DETAIL_COLUMNS]);
 
@@ -611,7 +624,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
       .get(`${META_API_URL}/static/tools/metasearch/`)
       .then((r) => (r.ok() ? r.text() : null))
       .catch(() => null);
-    if (!review) await meta.login();
+    if (!review || BOOKING_ENABLED) await meta.login();
 
     // META_IGNORE_HISTORY=1 (cờ --repeat): lần này bỏ qua lịch sử, nhưng vẫn ghi thêm vào lịch sử.
     const ignoreHistory = process.env.META_IGNORE_HISTORY === "1";
@@ -738,8 +751,27 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         const metaStatus = metaOk
           ? `OK ${metaRes.status} ${(metaRes.ms / 1000).toFixed(1)}s (${allMetaItems.length} item)`
           : `LỖI ${metaRes.status}: ${metaRes.data.message ?? ""}`;
+        // Chạy sau khi so meta/web: phiên deeplink rất ngắn nên bước này tự search meta lại ngay trước khi mở từng item.
+        let booking: BookingSummary | undefined;
+        if (BOOKING_ENABLED && metaOk && metaItems.length) {
+          const planned = BOOKING_LIMIT === null ? metaItems.length : Math.min(BOOKING_LIMIT, metaItems.length);
+          test.setTimeout(testInfo.timeout + planned * BOOKING_ITEM_MS);
+          console.log(`    đặt chỗ: mở ${planned}/${metaItems.length} item (${BOOKING_CONCURRENCY} luồng)`);
+          booking = await runBookingCheck({
+            browser,
+            webUrl: WEB_URL,
+            search: async () => (await meta.search(metaBody, d.metaTimeoutMs)).data.fareData?.filter(matchesAirline) ?? [],
+            limit: BOOKING_LIMIT,
+            concurrency: BOOKING_CONCURRENCY,
+            shotDir: path.join(runDir, "booking", c.id),
+            log: (message) => console.log(message),
+          });
+          fs.writeFileSync(path.join(runDir, "booking", `${c.id}.json`), JSON.stringify({ condition: c, ...booking }, null, 1));
+        }
+        const bookingNote = bookingVerdict(booking);
+
         // 1 bên không lấy được dữ liệu thì không được kết luận KHỚP (0 = 0 chỉ là do thiếu dữ liệu).
-        const verdict = webRes.timedOut || !metaOk
+        const comparison = webRes.timedOut || !metaOk
           ? `KHÔNG SO ĐƯỢC (${[webRes.timedOut && `web ${webRes.error}`, !metaOk && "meta lỗi"].filter(Boolean).join(", ")})`
           : result.priceDiffs + result.feeDiffs + result.smallPriceDiffs + result.metaOnly + result.webOnly + (firstRun?.priceDiffs ?? 0) === 0
             ? "KHỚP"
@@ -753,6 +785,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
                 result.webOnly && `chỉ web có ${result.webOnly}`,
                 firstRun && `lần search đầu lệch giá ${firstRun.priceDiffs} (search lại hết ${firstRun.cleared})`,
               ].filter(Boolean).join(", ");
+        const verdict = bookingNote ? `${comparison} · ${bookingNote}` : comparison;
         const deeplink = checkDeeplink(metaRes.data.fareData?.[0]?.dayViewDeeplinks, c);
 
         summaryCsv.append([{
@@ -787,6 +820,12 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
           webSystemMs,
           firstRunPriceDiffs: firstRun?.priceDiffs ?? "",
           firstRunCleared: firstRun?.cleared ?? "",
+          bookingPlanned: booking?.planned ?? "",
+          bookingOk: booking?.ok ?? "",
+          bookingPriceChanged: booking?.priceChanged ?? "",
+          bookingOfferGone: booking?.offerGone ?? "",
+          bookingErrors: booking?.errors ?? "",
+          bookingExpired: booking?.expired ?? "",
         }]);
         detailsCsv.append(result.rows.map((r) => detailToCsvRow(c.id, route, r)));
 
@@ -811,7 +850,7 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         reports.push({
           id: c.id, description, route, dates, pax, webStatus, metaStatus, deeplink, webUrl,
           metaSnapshotHref, metaToolHref, verdict, result, searchedAt: searchedAt.toLocaleString("vi-VN"),
-          webMs: webRes.ms, metaMs: metaRes.ms, webSystemMs, firstRun, diffJson,
+          webMs: webRes.ms, metaMs: metaRes.ms, webSystemMs, firstRun, diffJson, booking,
           rerunCommand: rerunCommand(c),
         });
         // Chỉ ghi lịch sử khi so được cả 2 bên — điều kiện lỗi/timeout để lần sau chạy lại.
@@ -825,12 +864,19 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
         }
         // Ghi lại report sau mỗi điều kiện: lỡ dừng giữa chừng vẫn có báo cáo phần đã chạy.
         writeHtmlReport(path.join(runDir, "report.html"), reports, startedAt);
+        writeBookingReport(path.join(runDir, "booking-report.html"), reports, startedAt);
 
         console.log(
           `[metasearch-v2] ${c.id} ${route} ${dates} ${pax} | meta=${result.metaOffers} web=${result.webResults.items} khớp=${result.matched} ` +
             `lệch giá=${result.priceDiffs} lệch<1k=${result.smallPriceDiffs} lệch phí=${result.feeDiffs} có voucher=${result.withVoucher} chỉ meta=${result.metaOnly} chỉ web=${result.webOnly} | deeplink=${deeplink} | => ${verdict}`
         );
         console.log(`    web: ${webStatus} | meta: ${metaStatus}`);
+        if (booking) {
+          console.log(
+            `    đặt chỗ: kiểm ${booking.planned}/${booking.items} item, OK ${booking.ok}, đổi giá ${booking.priceChanged}, ` +
+              `hết chuyến ${booking.offerGone}, lỗi ${booking.errors}, hết phiên ${booking.expired} (${booking.searches} lần search, ${secs(booking.ms)})`
+          );
+        }
         console.log(`    ⏱ phản hồi: meta ${secs(metaRes.ms)} · web ${secs(webRes.ms)}${webSystemMs ? ` (${webSystemMs})` : ""}`);
         if (near) console.log(`    ⏱ cất cánh trong 24h kể từ lúc search: ${near}`);
         result.warnings.forEach((w) => console.log(`    ⚠ ${w}`));
@@ -849,5 +895,6 @@ test.describe("V2 — So sánh kết quả search: metasearch đối tác vs tra
       console.log(`[metasearch-v2] Chế độ review: browser vẫn mở (${conditions.length * 2} tab META/WEB + 1 tab báo cáo).`);
     }
     console.log(`[metasearch-v2] Xong. Báo cáo: ${path.join(runDir, "report.html")}`);
+    if (BOOKING_ENABLED) console.log(`[metasearch-v2] Báo cáo đặt chỗ: ${path.join(runDir, "booking-report.html")}`);
   });
 });

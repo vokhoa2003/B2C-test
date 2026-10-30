@@ -6,6 +6,7 @@
  *   yarn compare:metasearch:v2:reports --open          # mở trang index.html (lọc, bấm link từng báo cáo)
  *   yarn compare:metasearch:v2:reports 3               # mở báo cáo #3 trong trình duyệt
  *   yarn compare:metasearch:v2:reports latest          # mở báo cáo mới nhất
+ *   yarn compare:metasearch:v2:reports latest --booking # mở báo cáo đặt chỗ (ảnh từng item) của lần đó
  *   yarn compare:metasearch:v2:reports --find SGN      # chỉ liệt kê lần chạy có route/kết luận chứa "SGN"
  *   yarn compare:metasearch:v2:reports --limit 10      # chỉ in 10 lần chạy gần nhất ra console
  *
@@ -212,10 +213,12 @@ function writeIndex(runs) {
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
+let booking = false;
 let find = "", limit = Infinity, openIndex = false, target = null, live = false, conds = "";
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--open") openIndex = true;
+  else if (a === "--booking") booking = true;
   else if (a === "--find") find = (args[++i] || "").toLowerCase();
   else if (a.startsWith("--find=")) find = a.slice(7).toLowerCase();
   else if (a === "--limit") limit = Number(args[++i]) || Infinity;
@@ -226,7 +229,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "latest" || /^\d+$/.test(a)) target = a === "latest" ? 1 : Number(a);
   else if (/^\d{4}-\d{2}-\d{2}T[\d-]+Z$/.test(a)) target = a;
   else {
-    console.error(`Tham số không hợp lệ: ${a}\nDùng: [số | latest | tên thư mục] [--open] [--find TEXT] [--limit N] [--live [--cond cond-N]]`);
+    console.error(`Tham số không hợp lệ: ${a}\nDùng: [số | latest | tên thư mục] [--open] [--booking] [--find TEXT] [--limit N] [--live [--cond cond-N]]`);
     process.exit(1);
   }
 }
@@ -264,7 +267,12 @@ if (target !== null) {
     console.error(`Báo cáo #${target} (${run.name}) không có file báo cáo.`);
     process.exit(1);
   }
-  openFile(run.report);
+  const bookingReport = path.join(run.dir, "booking-report.html");
+  if (booking && !fs.existsSync(bookingReport)) {
+    console.error(`Lần chạy này không có báo cáo đặt chỗ: ${run.name}`);
+    process.exit(1);
+  }
+  openFile(booking ? bookingReport : run.report);
   process.exit(0);
 }
 
