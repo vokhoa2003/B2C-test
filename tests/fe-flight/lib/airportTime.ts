@@ -2,14 +2,11 @@ import fs from "fs";
 import path from "path";
 
 /**
- * Thời gian bay THỰC = giờ đến − giờ đi, quy về UTC theo múi giờ sân bay.
- *
- * Vì sao cần: API trả `startTime`/`endTime` là giờ địa phương (chữ "Z" giả), còn `flight.duration` mỗi
- * system hiểu một kiểu (đã đo HAN→NRT: VN = thời gian thực; GALILEO_NDC = chỉ giờ bay, thiếu thời gian
- * nối chuyến; VJ = lệch đúng chênh múi giờ) → không field nào làm chuẩn được.
+ * Múi giờ sân bay — chỉ để báo cáo ghi rõ giờ GMT bên cạnh giờ địa phương (API trả `startTime`/`endTime`
+ * là giờ địa phương sân bay, chữ "Z" giả), tránh hiểu nhầm "20:00" là giờ HAN hay NRT.
  *
  * Múi giờ: theo quốc gia (danh mục public/PLAN/airports.json có countryCode); nước nhiều múi giờ thì
- * tra theo sân bay. Không biết → null (bỏ qua kiểm thời gian bay, không đoán).
+ * tra theo sân bay. Không biết → ghi "chưa rõ GMT" (không đoán).
  */
 
 const COUNTRY_TZ: Record<string, string> = {
@@ -101,11 +98,3 @@ export function timeInfo(wall: string, code: string): { local: string; offset: s
   };
 }
 
-/** Phút bay thực từ (giờ đi, sân bay đi) → (giờ đến, sân bay đến); null nếu thiếu múi giờ. */
-export function elapsedMinutes(startTime: string, from: string, endTime: string, to: string): { minutes: number | null; missing: string[] } {
-  const tzFrom = airportTimeZone(from);
-  const tzTo = airportTimeZone(to);
-  const missing = [!tzFrom && from, !tzTo && to].filter(Boolean) as string[];
-  if (!tzFrom || !tzTo) return { minutes: null, missing };
-  return { minutes: Math.round((wallToUtc(endTime, tzTo) - wallToUtc(startTime, tzFrom)) / 60_000), missing };
-}

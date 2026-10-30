@@ -1,5 +1,5 @@
 import { SystemResponse } from "./searchCapture";
-import { elapsedMinutes, timeInfo } from "./airportTime";
+import { timeInfo } from "./airportTime";
 
 /**
  * Từ response API → danh sách card KẾT QUẢ mà trang /flights/result PHẢI hiển thị (1 chiều).
@@ -8,8 +8,7 @@ import { elapsedMinutes, timeInfo } from "./airportTime";
  * - Mỗi chuyến (flight) của 1 fare = 1 card. Fare GALILEO / GALILEO_NDC có chặng VJ/JQ bị ẩn
  *   (trùng kết quả search VJ/JQ riêng). Hạng vé "HF" bị bỏ, hạng trùng tên cabinClass chỉ giữ hạng rẻ hơn.
  * - Giờ đi/đến: `startTime`/`endTime` là GIỜ ĐỊA PHƯƠNG sân bay gắn chữ "Z" giả → lấy nguyên HH:mm.
- * - Thời gian bay: THỰC = giờ đến − giờ đi quy về UTC theo múi giờ sân bay (airportTime.ts) → "XhYYm".
- *   KHÔNG dùng `flight.duration` vì mỗi system hiểu một kiểu. "+Nd" = số ngày lệch giữa ngày đến và ngày đi.
+ * - Thời gian bay: KHÔNG kiểm (đã thống nhất số web hiển thị là đúng). "+Nd" = số ngày lệch giữa ngày đến và ngày đi.
  * - Giá trên card = giá TRUNG BÌNH 1 khách, ĐÃ gồm thuế + phí (chế độ mặc định "full_1_adult"):
  *     (Σ giá vé + Σ thuế + Σ phí hãng + phí hệ thống − giảm giá API) ÷ (NL + TE + EB)
  *   với hạng rẻ nhất (theo totalAdt). Phí hệ thống (`fare.fees`): ADULT × số NL (isTemp: × 1), CHILD × số TE,
@@ -29,13 +28,6 @@ export type ExpectedLeg = {
   depTz: ReturnType<typeof timeInfo>;
   arrTz: ReturnType<typeof timeInfo>;
   nextDay: number;
-  /** Thời gian bay thực (giờ đi/đến + múi giờ sân bay); null = thiếu múi giờ, không kiểm. */
-  durationMin: number | null;
-  duration: string | null;
-  missingTz: string[];
-  /** Hai số API trả — chỉ để giải thích UI đang lấy số nào. */
-  apiDuration: string;
-  segmentSum: string;
   stops: number;
   stopLabel: string;
 };
@@ -84,14 +76,12 @@ const isVjOrJq = (seg: any) =>
 
 const hhmm = (t: string) => String(t).slice(11, 16);
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(String(b).slice(0, 10)) - Date.parse(String(a).slice(0, 10))) / 86_400_000);
-export const formatDuration = (min: number) => `${Math.floor(min / 60)}h${String(Math.round(min % 60)).padStart(2, "0")}m`;
 export const legKey = (flightCodes: string, depTime: string, arrTime: string) => `${flightCodes}|${depTime}|${arrTime}`;
 
 function toLeg(flight: any): ExpectedLeg {
   const segs = flight.segments;
   const first = segs[0];
   const last = segs[segs.length - 1];
-  const { minutes: durationMin, missing: missingTz } = elapsedMinutes(first.startTime, first.startPoint, last.endTime, last.endPoint);
   const stops = Number(flight.stopNumber) || 0;
   return {
     flightCodes: segs.map((s: any) => s.flightNumber).join(", "),
@@ -103,11 +93,6 @@ function toLeg(flight: any): ExpectedLeg {
     depTz: timeInfo(first.startTime, first.startPoint),
     arrTz: timeInfo(last.endTime, last.endPoint),
     nextDay: Math.max(0, dayDiff(first.startTime, last.endTime)),
-    durationMin,
-    duration: durationMin == null ? null : formatDuration(durationMin),
-    missingTz,
-    apiDuration: formatDuration(Number(flight.duration) || 0),
-    segmentSum: formatDuration(segs.reduce((t: number, s: any) => t + (Number(s.duration) || 0) + (Number(s.stopTime) || 0), 0)),
     stops,
     stopLabel: STOP_LABELS[Math.min(stops, 2)],
   };
@@ -179,7 +164,6 @@ export function buildExpectedCards(responses: SystemResponse[], route: { from: s
           skip("không có hạng vé");
           continue;
         }
-        if (leg.missingTz.length) skip(`card không kiểm thời gian bay (chưa có múi giờ ${leg.missingTz.join(", ")})`);
         const inv = cheapest(invs);
         const firstHand = Object.values(invs[0].handBaggage ?? {})[0] as string | undefined;
         cards.push({

@@ -18,7 +18,6 @@ Folder độc lập, không dùng chung code với `tests/metasearch*` hay `test
 | Card có trong API không | khoá chuyến |
 | Điểm đi/đến, điểm dừng | `segments`, `stopNumber` |
 | Giờ đi/đến, +Nd | `startTime`/`endTime` lấy nguyên HH:mm (giờ địa phương, chữ "Z" là giả), ngày đến − ngày đi |
-| Thời gian bay | **giờ đến − giờ đi quy về UTC theo múi giờ sân bay** (`lib/airportTime.ts`) |
 | Giá / khách | (Σ vé + Σ thuế + Σ phí hãng + phí hệ thống − giảm giá API) ÷ (NL + TE + EB), hạng rẻ nhất |
 | Hành lý xách tay, số vé còn | hạng đầu tiên, `segments[0].seat` |
 
@@ -26,26 +25,48 @@ Một số quy tắc cần biết:
 
 - **Voucher trừ dần:** card gạch giá gốc và hiện badge "Đã giảm X". Tool chấp nhận giá hiển thị = giá gốc − X ÷ số khách, và ghi chú lại.
 - **Card web tự ẩn:** fare GALILEO có chặng VJ/JQ, hạng "HF", hạng trùng tên. Các card này được đếm ở dòng "Bỏ qua".
-- **Không dùng `flight.duration` làm chuẩn** vì mỗi system hiểu một kiểu. Đã đo trên HAN→NRT:
-  - VN: đúng thời gian thực.
-  - GALILEO_NDC: chỉ có giờ bay, thiếu thời gian nối chuyến.
-  - VJ: lệch đúng bằng chênh lệch múi giờ.
-- **Giờ API là giờ địa phương của từng sân bay**, không phải GMT. Ví dụ VN310 `00:25Z` → `07:00Z` = 00:25 giờ HAN → 07:00 giờ NRT, bay 4h35m, khớp `duration: 275`. Báo cáo hiển thị giống card web (`20:10 HAN → 06:10+1d NRT`) và có thêm 1 dòng quy đổi GMT (`HAN GMT+7 → 13:10 20/12 GMT · NRT GMT+9 → 21:10 20/12 GMT`). Không biết múi giờ thì ghi "chưa rõ GMT".
-- **Múi giờ:** tra theo quốc gia trong `public/PLAN/airports.json`; nước nhiều múi giờ thì tra theo từng sân bay. Sân bay chưa có trong bảng thì **không kiểm** thời gian bay và ghi ở dòng "Bỏ qua". Bổ sung vào `AIRPORT_TZ` khi gặp.
+- **Thời gian bay: không kiểm.** Đã thống nhất số web hiển thị là đúng.
+- **Giờ API là giờ địa phương của từng sân bay.** Báo cáo hiển thị giống card web (`20:10 HAN → 06:10+1d NRT`) và có thêm 1 dòng quy đổi GMT (`HAN GMT+7 → 13:10 20/12 GMT · NRT GMT+9 → 21:10 20/12 GMT`).
+- **Múi giờ (chỉ dùng cho dòng GMT):** tra theo quốc gia trong `public/PLAN/airports.json`; nước nhiều múi giờ thì tra theo từng sân bay. Sân bay chưa có trong bảng thì ghi "chưa rõ GMT". Bổ sung vào `AIRPORT_TZ` trong `lib/airportTime.ts` khi gặp.
+
+## Điều kiện search: cùng pattern với metasearch v2
+
+`lib/conditions.ts` sinh điều kiện theo cách của meta v2, dùng **chung bộ case study PAX / TRIP / ROUTE** trong `tests/metasearch-v2/metasearch-vs-web-v2.json`. FE chỉ đọc file này, nên sửa case bên meta là FE dùng theo.
+
+- **Mặc định là đa dạng:**
+  - Mỗi lần chạy lấy `conditionsPerRun` điều kiện (cấu hình trong `cases.json`, hiện là 5).
+  - Xen kẽ nội địa và quốc tế; case chưa chạy được ưu tiên trước.
+  - Chặng và ngày bay ngẫu nhiên theo từng case (theo vùng và danh mục sân bay, case 24h…).
+  - Không lặp lại chặng đã kiểm ở các lần trước. Lịch sử của FE lưu riêng ở `.test-state/fe-flight/history.json`, không dùng chung với meta.
+- **Có chỉ định thì chạy đúng chỉ định:** `--from/--to`, `--case`, `--adt/--chd/--inf`, `--24h`, `--route`.
+- FE hiện chỉ kiểm **1 chiều**: 22/40 mẫu. 18 mẫu khứ hồi được bỏ qua và in ra danh sách khi chạy (Mốc 3).
+- Bộ điều kiện của mỗi lần chạy được chốt vào `<lần chạy>/conditions.json`. Nhờ vậy, khi Playwright nạp lại spec (sau mỗi case lỗi), bộ điều kiện vẫn giữ nguyên.
 
 ## Chạy
 
 ```bash
-yarn fe:flight                                   # mọi case trong cases.json
-yarn fe:flight --case OW-01,OW-04                # chỉ vài case
-yarn fe:flight --from SGN --to HAN --depart +7 --adt 2 --inf 1
+yarn fe:flight                                   # mặc định: 5 điều kiện đa dạng
+yarn fe:flight --count 10 --route domestic       # --route domestic | international | all
+yarn fe:flight --case PAX-09,ROUTE               # chỉ case study này (mã hoặc tiền tố)
+yarn fe:flight --24h                             # mọi điều kiện bay hôm nay / ngày mai
+yarn fe:flight --adt 2 --chd 1 --inf 1           # ghi đè số khách cho mọi điều kiện
+yarn fe:flight --from SGN --to HAN --depart +7   # đúng 1 hành trình (bỏ qua mẫu và lịch sử)
+yarn fe:flight --dry-run                         # chỉ in các điều kiện sẽ chạy
+yarn fe:flight --repeat                          # lần này bỏ qua lịch sử
+yarn fe:flight:clear                             # xoá lịch sử chặng đã kiểm
 yarn fe:flight --fixture <thư mục>               # không gọi API search thật
 yarn fe:flight:headed                            # xem trình duyệt
 ```
 
-Script luôn chạy chromium, 1 worker, không retry, vì mỗi lần retry là thêm 1 lần search thật.
+Script luôn chạy chromium, 1 worker, không retry, vì mỗi lần retry là thêm 1 lần search thật. 1 case lệch không làm dừng các case còn lại; `report.html` được cập nhật sau mỗi case.
 
 ## Kết quả
+
+```bash
+yarn fe:flight:reports            # liệt kê các lần chạy
+yarn fe:flight:reports latest     # mở báo cáo lần mới nhất (hoặc số #N / tên thư mục)
+yarn fe:flight:reports --open     # mở trang tổng hợp mọi lần chạy
+```
 
 `.test-state/fe-flight/<thời điểm>/`:
 

@@ -54,10 +54,6 @@ function issuesOf(ui: UiCard, exp: ExpectedCard): FieldIssue[] {
     const p = exp.legs.length > 1 ? `chặng ${i + 1}: ` : "";
     check(`${p}điểm đi`, u.from, leg.from);
     check(`${p}điểm đến`, u.to, leg.to);
-    if (leg.duration && u.duration !== leg.duration) {
-      const source = u.duration === leg.segmentSum ? " (= Σ duration + stopTime từng segment)" : u.duration === leg.apiDuration ? " (= flight.duration)" : "";
-      issues.push({ field: `${p}thời gian bay`, ui: u.duration + source, api: `${leg.duration} (giờ đi/đến + múi giờ)` });
-    }
     check(`${p}điểm dừng`, u.stopLabel, leg.stopLabel);
     check(`${p}+ngày`, u.nextDay, leg.nextDay);
   });

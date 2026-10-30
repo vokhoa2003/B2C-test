@@ -23,6 +23,8 @@
     "compare:metasearch:v2:open": "node scripts/metasearch-reports-v2.js --live",
     "fe:flight": "node scripts/fe-flight.js",
     "fe:flight:headed": "node scripts/fe-flight.js --headed",
+    "fe:flight:reports": "node scripts/fe-flight-reports.js",
+    "fe:flight:clear": "node scripts/fe-flight.js --clear-history",
     "hotel:price": "node scripts/hotel-price.js",
     "hotel:price:reports": "node scripts/hotel-price-reports.js"
   },
