@@ -1,0 +1,10 @@
+{
+  "maxCards": 400,
+  "cases": [
+    { "id": "OW-01", "description": "Nội địa 1 chiều, 1 NL", "from": "SGN", "to": "HAN", "daysAhead": 14, "adults": 1, "children": 0, "infants": 0 },
+    { "id": "OW-02", "description": "Nội địa 1 chiều, 2 NL 1 TE 1 EB", "from": "HAN", "to": "DAD", "daysAhead": 21, "adults": 2, "children": 1, "infants": 1 },
+    { "id": "OW-03", "description": "Nội địa 1 chiều, chặng ít chuyến", "from": "SGN", "to": "PQC", "daysAhead": 10, "adults": 1, "children": 1, "infants": 0 },
+    { "id": "OW-04", "description": "Quốc tế 1 chiều Đông Nam Á, 1 NL", "from": "SGN", "to": "BKK", "daysAhead": 20, "adults": 1, "children": 0, "infants": 0 },
+    { "id": "OW-05", "description": "Quốc tế 1 chiều xa (nối chuyến, qua ngày), 2 NL 1 EB", "from": "HAN", "to": "CDG", "daysAhead": 30, "adults": 2, "children": 0, "infants": 1 }
+  ]
+}
