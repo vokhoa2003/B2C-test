@@ -10,6 +10,7 @@ yarn hotel:price --case H-03,H-09                    # chỉ case trong hotel-pr
 yarn hotel:price --region intl                       # chỉ case quốc tế (dom / intl)
 yarn hotel:price --loc "Đà Nẵng" --in +14 --nights 3 --rooms 2 --adt 4
 yarn hotel:price --loc "Nha Trang" --chd 2 --ages 5,9
+yarn hotel:price --hotel "Grand Plaza" --case H-01 --in 2026-11-14   # 1 khách sạn theo tên
 yarn hotel:price --no-detail                         # chỉ list, không mở detail từng KS (nhanh)
 ```
 
@@ -86,6 +87,8 @@ TMS detail 8.497.570 (inclusive) × 4 = 33.990.280 + 4.078.834 (12%) ÷ 4 = 9.51
 ## Case (hotel-price.json)
 
 `H-01` … `H-10`: số phòng / người lớn / trẻ em (tuổi), số đêm `[min, max]`, ngày nhận phòng = hôm nay + `daysAhead [min, max]`, `region` (`domestic` mặc định / `international`). Địa điểm chọn ngẫu nhiên trong `locations`. Tool tìm địa điểm qua `GET /hotel/location/search`, ưu tiên CITY → AREA → COUNTRY và bỏ kết quả là 1 khách sạn lẻ. Địa điểm phải đúng tên trên hệ (VD `Phu Quoc Island`, không phải `Phú Quốc`).
+
+`--hotel` tìm khách sạn lẻ qua cùng API rồi search với `searchType: HOTEL` như web, mặc định 1 điều kiện. Khách sạn phải có đủ mọi từ trong tên (không phân biệt dấu); không có thì báo lỗi kèm gợi ý, không tính giá khách sạn khác. Khớp nhiều khách sạn thì tool chọn tên ngắn nhất và in các tên còn lại. Số phòng/khách/đêm vẫn lấy từ template, nên cần chỉ định `--case` hoặc `--rooms --adt --chd --nights`.
 
 ## File
 

@@ -55,6 +55,14 @@ export type HotelDetailResult = {
 export const removeVietnameseChars = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
 
+export const locationName = (l: HotelLocation) => String(l.text ?? l.textTranslate ?? l.displayName ?? l.cityName ?? "");
+
+const nameRank = (l: HotelLocation, term: string) => {
+  const key = removeVietnameseChars(term).toLowerCase().trim();
+  const name = removeVietnameseChars(locationName(l)).toLowerCase();
+  return name === key ? 0 : name.startsWith(key) ? 1 : 2;
+};
+
 export class HotelApiClient {
   constructor(
     private request: APIRequestContext,
@@ -83,14 +91,26 @@ export class HotelApiClient {
    */
   async findLocation(term: string): Promise<HotelLocation | null> {
     const list = await this.searchLocations(term);
-    const key = removeVietnameseChars(term).toLowerCase().trim();
-    const name = (l: HotelLocation) => removeVietnameseChars(String(l.text ?? l.textTranslate ?? l.displayName ?? l.cityName ?? "")).toLowerCase();
     const rank = (l: HotelLocation) => {
       const typeRank = { CITY: 0, AREA: 1, COUNTRY: 2 }[l.searchType ?? ""] ?? 3;
-      const nameRank = name(l) === key ? 0 : name(l).startsWith(key) ? 1 : 2;
-      return typeRank * 10 + nameRank;
+      return typeRank * 10 + nameRank(l, term);
     };
     return list.filter((l) => l.searchType !== "HOTEL").sort((a, b) => rank(a) - rank(b))[0] ?? null;
+  }
+
+  /**
+   * Khách sạn lẻ có đủ mọi từ trong tên, tên ngắn nhất (sát nhất) đứng đầu. API tìm mờ nên kết quả đầu không chắc đúng.
+   * So sánh bỏ dấu cách vì "Hà Nội" và "Hanoi" cùng tồn tại. Search bằng locationId = id khách sạn, searchType HOTEL như web.
+   */
+  async findHotels(term: string): Promise<HotelLocation[]> {
+    const normalize = (s: string) => removeVietnameseChars(s).toLowerCase();
+    const words = normalize(term).replace(/^(khach san|ks|hotel)\s+/, "").split(/\s+/).filter(Boolean);
+    const matches = (l: HotelLocation) => {
+      const names = normalize([l.text, l.textTranslate, l.displayName].filter(Boolean).join(" ")).replace(/\s+/g, "");
+      return words.every((w) => names.includes(w));
+    };
+    const list = await this.searchLocations(term);
+    return list.filter((l) => l.searchType === "HOTEL" && matches(l)).sort((a, b) => locationName(a).length - locationName(b).length);
   }
 
   async search(body: HotelSearchBody): Promise<HotelSearchResult> {

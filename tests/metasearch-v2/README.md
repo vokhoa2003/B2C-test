@@ -115,7 +115,7 @@ Sau khi so meta/web, tool mở deeplink của item meta trên web test, đợi k
 - Web hiện chung 1 popup cho mọi lỗi, nên tool phân loại theo response API và ghi thêm nội dung popup.
 - Phiên deeplink rất ngắn, nên bước này tự search meta lại ngay trước khi mở.
 - Deeplink meta trỏ tới production; tool luôn đổi host sang web test và chặn request tới production. Click ghi vào `meta_search` của dev với `utm_campaign=auto-test`.
-- **Mỗi item = 1 lần backend search lại vendor**, nên mặc định chỉ mở 20 item / điều kiện, chia đều theo system.
+- **Mỗi item = 1 lần backend search lại vendor**, nên chỉ mở `bookingLimit` item / điều kiện, chia đều theo system. Đặt trong `metasearch-vs-web-v2.json`: số > 0 hoặc `"all"` (mọi item), không khai báo thì là 20; cờ `--booking-limit` ghi đè cho 1 lần chạy.
 - Mỗi item được chụp màn hình trang deeplink trỏ tới (`booking/cond-N/*.jpg`, trừ item chưa mở được vì hết phiên).
 - Kết quả: trang riêng `booking-report.html` (ảnh từng item, lọc theo kết quả); cột "Đặt chỗ" trong `report.html`; dữ liệu ở `booking/cond-N.json`.
 

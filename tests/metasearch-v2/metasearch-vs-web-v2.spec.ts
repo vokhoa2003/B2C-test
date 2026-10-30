@@ -110,6 +110,8 @@ type RouteFilter = RouteType | "all";
 
 type TestData = {
   conditionsPerRun: number;
+  /** Số item mở deeplink mỗi điều kiện: số > 0 hoặc "all" (mọi item). Ghi đè bằng cờ --booking-limit. */
+  bookingLimit?: number | "all";
   /** Chỉ dùng template khớp bộ lọc. Ghi đè bằng env META_TRIP_TYPE / META_ROUTE_TYPE (cờ --trip / --route). */
   filters?: { tripType?: TripFilter; routeType?: RouteFilter; airlines?: string[] };
   templates: ConditionTemplate[];
@@ -319,10 +321,14 @@ const matchesAirline = (item: FareItem) =>
 const WEB_URL = (process.env.META_COMPARE_WEB_URL || "https://dev.triphubs.vn").replace(/\/+$/, "");
 /**
  * Bước đặt chỗ (helpers/metasearchBookingCheck.ts): mỗi item = 1 lần backend search lại vendor, nên mặc định chỉ kiểm
- * BOOKING_LIMIT item / điều kiện, chia đều theo system. Cờ --booking-limit N|all, --booking-concurrency N, --no-booking.
+ * BOOKING_LIMIT item / điều kiện (bookingLimit trong JSON), chia đều theo system. Cờ --booking-limit N|all, --booking-concurrency N, --no-booking.
  */
 const BOOKING_ENABLED = process.env.META_BOOKING !== "0";
-const BOOKING_LIMIT = process.env.META_BOOKING_LIMIT === "all" ? null : Number(process.env.META_BOOKING_LIMIT) || 20;
+const bookingLimit = process.env.META_BOOKING_LIMIT || (DATA.bookingLimit ?? 20);
+if (bookingLimit !== "all" && !(Number.isInteger(Number(bookingLimit)) && Number(bookingLimit) > 0)) {
+  throw new Error(`bookingLimit không hợp lệ: ${JSON.stringify(bookingLimit)} — cần số nguyên > 0 hoặc "all" (bỏ bước này: --no-booking)`);
+}
+const BOOKING_LIMIT = bookingLimit === "all" ? null : Number(bookingLimit);
 const BOOKING_CONCURRENCY = Number(process.env.META_BOOKING_CONCURRENCY) || 3;
 /** Thời gian dự trù cho 1 item (gồm cả search lại vendor), để nới timeout của test. */
 const BOOKING_ITEM_MS = 60_000;

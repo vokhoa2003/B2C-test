@@ -2,7 +2,7 @@
  * Hiển thị giá khách sạn theo công thức web + TMS (xem tests/hotel-price/README.md):
  *
  *   yarn hotel:price [--count N] [--hotels 10..30] [--case H-03,H-09] [--region dom|intl] [--no-detail]
- *   yarn hotel:price --loc "Đà Nẵng" [--in YYYY-MM-DD|today|tomorrow|+N] [--nights N]
+ *   yarn hotel:price --loc "Đà Nẵng" | --hotel "Grand Plaza" [--in YYYY-MM-DD|today|tomorrow|+N] [--nights N]
  *                    [--rooms N] [--adt N] [--chd N --ages 5,8]
  *
  * Playwright không nhận tham số lạ nên script đổi cờ thành biến môi trường HOTEL_* rồi gọi `playwright test`.
@@ -11,7 +11,7 @@ const { spawnSync } = require("child_process");
 
 const USAGE = [
   "Dùng: --count N  --hotels 10..30  --case H-03,H-09  --region dom|intl  --no-detail  --headed",
-  "Chỉ định: --loc \"Đà Nẵng\"  --in YYYY-MM-DD|today|tomorrow|+N  --nights N  --rooms N  --adt N  --chd N  --ages 5,8",
+  "Chỉ định: --loc \"Đà Nẵng\" hoặc --hotel \"Grand Plaza\"  --in YYYY-MM-DD|today|tomorrow|+N  --nights N  --rooms N  --adt N  --chd N  --ages 5,8",
 ].join("\n");
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -29,6 +29,7 @@ const FLAGS = {
   case: { env: "HOTEL_CASES", upper: true, check: (v) => /^[A-Z0-9-]+(,[A-Z0-9-]+)*$/.test(v), hint: "mã case, VD H-03 hoặc H-03,H-09" },
   region: { env: "HOTEL_REGION", values: ["domestic", "international"] },
   loc: { env: "HOTEL_LOC", check: (v) => v.trim().length >= 2, hint: "tên địa điểm, VD \"Đà Nẵng\"" },
+  hotel: { env: "HOTEL_NAME", check: (v) => v.trim().length >= 2, hint: "tên khách sạn, VD \"Grand Plaza\"" },
   in: { env: "HOTEL_IN", map: relativeDate, check: (v) => DATE.test(v), hint: "dạng YYYY-MM-DD, today, tomorrow hoặc +N" },
   nights: { env: "HOTEL_NIGHTS", check: (v) => Number(v) >= 1 && Number(v) <= 30, hint: "số đêm 1–30" },
   rooms: { env: "HOTEL_ROOMS", check: (v) => Number(v) >= 1 && Number(v) <= 9, hint: "số phòng 1–9" },
@@ -69,6 +70,10 @@ for (let i = 0; i < args.length; i++) {
   env[flag.env] = value;
 }
 
+if (env.HOTEL_NAME && env.HOTEL_LOC) {
+  console.error("Chỉ dùng 1 trong 2: --loc hoặc --hotel.");
+  process.exit(1);
+}
 if (env.HOTEL_AGES && env.HOTEL_CHD && env.HOTEL_AGES.split(",").length !== Number(env.HOTEL_CHD)) {
   console.error(`--ages cần đủ ${env.HOTEL_CHD} tuổi (đang ${env.HOTEL_AGES}).`);
   process.exit(1);

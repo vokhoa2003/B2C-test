@@ -174,7 +174,7 @@ export function rerunCommand(c: HotelCondition, opts: RunOptions): string {
   return [
     "yarn hotel:price --count 1",
     `--case ${caseId}`,
-    `--loc "${c.location.term.replace(/"/g, "")}"`,
+    `--${c.location.searchType === "HOTEL" ? "hotel" : "loc"} "${c.location.term.replace(/"/g, "")}"`,
     `--in ${c.checkIn}`,
     `--nights ${c.nights}`,
     `--rooms ${c.rooms}`,

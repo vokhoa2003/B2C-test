@@ -2,7 +2,7 @@ import { test } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 import { loginWebApi } from "../helpers/webSearchClient";
-import { HotelApiClient, mapLimit, type HotelDetailResult, type HotelLocation, type HotelSearchResult } from "../helpers/hotelApiClient";
+import { HotelApiClient, locationName, mapLimit, type HotelDetailResult, type HotelLocation, type HotelSearchResult } from "../helpers/hotelApiClient";
 import {
   cheapestRoom,
   fmt,
@@ -83,7 +83,7 @@ function buildConditions() {
   let templates = cases?.length ? DATA.templates.filter((t) => cases.some((c) => t.id === c || t.id.startsWith(c))) : DATA.templates;
   if (env.HOTEL_REGION) templates = templates.filter((t) => (t.region ?? "domestic") === env.HOTEL_REGION);
   if (!templates.length) throw new Error(`Không có template nào khớp --case ${env.HOTEL_CASES ?? ""} --region ${env.HOTEL_REGION ?? ""}`);
-  const count = Number(env.HOTEL_CONDITIONS) || (cases?.length ? Math.max(cases.length, templates.length) : DATA.conditionsPerRun);
+  const count = Number(env.HOTEL_CONDITIONS) || (env.HOTEL_NAME ? 1 : cases?.length ? Math.max(cases.length, templates.length) : DATA.conditionsPerRun);
 
   // Chạy lần lượt các template (xáo trộn) để mỗi lượt phủ được nhiều tình huống khác nhau.
   const order = [...templates].sort(() => Math.random() - 0.5);
@@ -99,7 +99,7 @@ function buildConditions() {
     return {
       id: `cond-${i + 1}-${t.id}`,
       template: t,
-      term: env.HOTEL_LOC || pick(DATA.locations[region]),
+      term: env.HOTEL_NAME || env.HOTEL_LOC || pick(DATA.locations[region]),
       rooms,
       adults,
       children,
@@ -193,10 +193,16 @@ test.describe("Giá khách sạn — web vs TMS (chỉ hiển thị)", () => {
     const locationCache = new Map<string, HotelLocation | null>();
     const conditions: HotelCondition[] = [];
     const raw: unknown[] = [];
+    const findPlace = async (term: string) => {
+      if (!env.HOTEL_NAME) return web.findLocation(term);
+      const [first, ...others] = await web.findHotels(term);
+      if (others.length) console.log(`  Tên khớp ${others.length + 1} khách sạn, chọn "${locationName(first)}" — còn lại: ${others.slice(0, 5).map(locationName).join(", ")}${others.length > 5 ? ", …" : ""}`);
+      return first ?? null;
+    };
 
     for (const plan of conditionsPlan) {
       const ctx: MarkupContext = { roomsNum: plan.rooms, nights: plan.nights };
-      if (!locationCache.has(plan.term)) locationCache.set(plan.term, await web.findLocation(plan.term).catch(() => null));
+      if (!locationCache.has(plan.term)) locationCache.set(plan.term, await findPlace(plan.term).catch(() => null));
       const location = locationCache.get(plan.term) ?? null;
       const condition: HotelCondition = {
         id: plan.id,
@@ -224,8 +230,8 @@ test.describe("Giá khách sạn — web vs TMS (chỉ hiển thị)", () => {
       console.log(`\n▶ ${plan.id} ${condition.location.name} — ${plan.checkIn}→${plan.checkOut} (${plan.nights} đêm), ${plan.rooms} phòng, ${plan.adults} NL${plan.children ? ` + ${plan.children} TE` : ""}`);
       if (!location) {
         const candidates = await web.searchLocations(plan.term).catch(() => []);
-        condition.error = `Không tìm thấy thành phố/khu vực "${plan.term}" (GET /hotel/location/search trả: ${
-          candidates.slice(0, 5).map((l) => `${l.text ?? l.displayName} [${l.searchType}]`).join(", ") || "rỗng"
+        condition.error = `Không tìm thấy ${env.HOTEL_NAME ? "khách sạn" : "thành phố/khu vực"} "${plan.term}" (GET /hotel/location/search trả: ${
+          candidates.slice(0, 5).map((l) => `${locationName(l)} [${l.searchType}]`).join(", ") || "rỗng"
         })`;
         console.log(`  ⚠ ${condition.error}`);
         continue;

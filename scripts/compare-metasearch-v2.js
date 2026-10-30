@@ -26,7 +26,7 @@ const { spawnSync } = require("child_process");
 const HISTORY_FILE = path.join(__dirname, "..", ".test-state", "metasearch-compare-v2", "history.json");
 const USAGE = [
   "Dùng: --trip oneway|roundtrip|all  --route domestic|international|all  --count N  --case PAX-09,ROUTE  --24h  --no-recheck  --dry-run  --repeat  --review  --clear-history  --headed  --ui",
-  "Đặt chỗ: --booking-limit N|all (mặc định 20 item / điều kiện)  --booking-concurrency N (mặc định 3)  --no-booking",
+  "Đặt chỗ: --booking-limit N|all (mặc định: bookingLimit trong JSON)  --booking-concurrency N (mặc định 3)  --no-booking",
   "Chỉ định hành trình: --from SGN --to HAN [--trip rt] [--depart YYYY-MM-DD|today|tomorrow|+N] [--return …]",
   "Số khách / hãng (dùng kèm mọi chế độ): --adt N --chd N --inf N (em bé ≤ người lớn, tổng ≤ 9)  --airline VNA (hoặc VN,VJ)",
 ].join("\n");

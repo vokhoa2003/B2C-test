@@ -1,5 +1,6 @@
 {
-  "conditionsPerRun": 1,
+  "conditionsPerRun": 2,
+  "bookingLimit": 20,
   "filters": {
     "tripType": "all",
     "routeType": "all"
